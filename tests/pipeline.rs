@@ -219,3 +219,35 @@ fn the_first_run_is_never_blocked_by_the_guard() {
     let env = Env::new();
     publish(&env.config, &[], 1, false).unwrap();
 }
+
+#[test]
+fn a_run_against_the_mock_docker_api_documents_what_it_serves() {
+    use cadastre::docker::Docker;
+    use cadastre::pipeline::run_once;
+    use support::mock_docker::MockDocker;
+
+    let env = Env::new();
+    let documents: Vec<_> = fixtures().into_iter().map(|(_, d)| d).collect();
+    let mock = MockDocker::with_containers(&documents);
+    let outcome = run_once(&env.config, &Docker::new(&mock.url), 1, false).unwrap();
+    assert_eq!(outcome.containers, 4);
+    assert!(env.out("stacks/shop.md").contains("shop-web-1"));
+}
+
+#[test]
+fn a_proxy_that_suddenly_answers_with_nothing_does_not_wipe_the_documentation() {
+    use cadastre::docker::Docker;
+    use cadastre::pipeline::run_once;
+    use support::mock_docker::MockDocker;
+
+    let env = Env::new();
+    let documents: Vec<_> = fixtures().into_iter().map(|(_, d)| d).collect();
+    let mock = MockDocker::with_containers(&documents);
+    let docker = Docker::new(&mock.url);
+    run_once(&env.config, &docker, 1, false).unwrap();
+    for document in &documents {
+        mock.remove(document["Id"].as_str().unwrap());
+    }
+    assert!(run_once(&env.config, &docker, 2, false).is_err());
+    assert!(env.exists("stacks/shop.md"));
+}
