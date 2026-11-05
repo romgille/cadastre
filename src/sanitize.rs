@@ -67,9 +67,31 @@ fn build(inspect: &Value, name: &str) -> Result<Container> {
 ///
 /// Labels are free-form and routinely carry credentials (basic-auth hashes,
 /// API keys), so the default is to drop them. Only keys that are known to be
-/// descriptive are allowed.
-pub fn label_allowed(key: &str) -> bool {
-    key.starts_with("org.opencontainers.image.")
+/// descriptive are allowed, and a few values are dropped even under an
+/// allowed key.
+pub fn label_allowed(key: &str, value: &str) -> bool {
+    key.starts_with("org.opencontainers.image.") || traefik_routing_label(key, value)
+}
+
+/// Traefik labels that describe where a service is reachable.
+///
+/// Middlewares (basic-auth users, header values, ...) are excluded on purpose:
+/// they are where Traefik configurations keep their secrets. A router rule
+/// that matches on a header value can embed a shared secret too, so those
+/// rules are dropped.
+fn traefik_routing_label(key: &str, value: &str) -> bool {
+    if key == "traefik.enable" {
+        return true;
+    }
+    if let Some(rest) = key.strip_prefix("traefik.http.routers.") {
+        if rest.ends_with(".rule") {
+            return !value.to_ascii_lowercase().contains("header");
+        }
+        return [".entrypoints", ".service", ".tls.certresolver"]
+            .iter()
+            .any(|suffix| rest.ends_with(suffix));
+    }
+    key.starts_with("traefik.http.services.") && key.ends_with(".loadbalancer.server.port")
 }
 
 fn allowed_labels(labels: Option<&Map<String, Value>>) -> BTreeMap<String, String> {
@@ -77,12 +99,13 @@ fn allowed_labels(labels: Option<&Map<String, Value>>) -> BTreeMap<String, Strin
     for (key, value) in labels.into_iter().flatten() {
         // Labels promoted to dedicated fields are not repeated here.
         let promoted = [LABEL_PROJECT, LABEL_SERVICE, LABEL_VERSION].contains(&key.as_str());
-        if promoted || !label_allowed(key) {
+        let Some(value) = value.as_str() else {
+            continue;
+        };
+        if promoted || !label_allowed(key, value) {
             continue;
         }
-        if let Some(value) = value.as_str() {
-            kept.insert(clean(key), clean(value));
-        }
+        kept.insert(clean(key), clean(value));
     }
     kept
 }
@@ -345,6 +368,46 @@ mod tests {
         let c = container_from_inspect(&sample()).unwrap();
         let keys: Vec<_> = c.labels.keys().map(String::as_str).collect();
         assert_eq!(keys, ["org.opencontainers.image.source"]);
+    }
+
+    #[test]
+    fn traefik_routing_labels_are_kept() {
+        let mut inspect = sample();
+        inspect["Config"]["Labels"] = json!({
+            "traefik.enable": "true",
+            "traefik.http.routers.shop.rule": "Host(`shop.example.com`)",
+            "traefik.http.routers.shop.entrypoints": "websecure",
+            "traefik.http.routers.shop.service": "shop",
+            "traefik.http.routers.shop.tls.certresolver": "letsencrypt",
+            "traefik.http.services.shop.loadbalancer.server.port": "8080"
+        });
+        let c = container_from_inspect(&inspect).unwrap();
+        assert_eq!(c.labels.len(), 6, "{:?}", c.labels);
+        assert_eq!(
+            c.labels["traefik.http.routers.shop.rule"],
+            "Host(`shop.example.com`)"
+        );
+    }
+
+    #[test]
+    fn traefik_middlewares_and_unrelated_labels_are_dropped() {
+        let mut inspect = sample();
+        inspect["Config"]["Labels"] = json!({
+            "traefik.http.middlewares.auth.basicauth.users": "admin:$apr1$hash",
+            "traefik.http.middlewares.headers.headers.customrequestheaders.X-Key": "hunter2",
+            "traefik.http.routers.shop.middlewares": "auth",
+            "traefik.docker.network": "proxy"
+        });
+        assert!(container_from_inspect(&inspect).unwrap().labels.is_empty());
+    }
+
+    #[test]
+    fn a_router_rule_matching_a_header_is_dropped() {
+        let mut inspect = sample();
+        inspect["Config"]["Labels"] = json!({
+            "traefik.http.routers.api.rule": "Host(`api.example.com`) && Header(`X-Api-Key`, `hunter2`)"
+        });
+        assert!(container_from_inspect(&inspect).unwrap().labels.is_empty());
     }
 
     #[test]
