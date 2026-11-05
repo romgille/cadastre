@@ -13,6 +13,7 @@ pub mod log;
 pub mod metrics;
 pub mod model;
 pub mod output;
+pub mod pipeline;
 pub mod render;
 pub mod sanitize;
 pub mod snapshot;
