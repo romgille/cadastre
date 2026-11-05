@@ -27,17 +27,74 @@ pub struct Page {
     pub content: String,
 }
 
-/// Renders one page per stack.
+/// Path of the index page, relative to the output directory.
+pub const INDEX_PATH: &str = "index.md";
+
+/// Renders the index page and one page per stack.
 pub fn render(containers: &[Container]) -> Vec<Page> {
     let groups = group_by_stack(containers);
     let slugs = assign_slugs(groups.keys().copied());
-    groups
+
+    let mut pages = vec![Page {
+        path: INDEX_PATH.to_string(),
+        content: render_index(&groups, &slugs),
+    }];
+    pages.extend(groups.iter().map(|(stack, members)| Page {
+        path: stack_path(&slugs[stack]),
+        content: render_stack(stack, members),
+    }));
+    pages
+}
+
+fn stack_path(slug: &str) -> String {
+    format!("stacks/{slug}.md")
+}
+
+fn render_index(
+    groups: &BTreeMap<&str, Vec<&Container>>,
+    slugs: &BTreeMap<&str, String>,
+) -> String {
+    let mut doc = Doc::default();
+    doc.line(MARKER);
+    doc.line(NOTICE);
+    doc.blank();
+    doc.line("# Containers overview");
+    doc.blank();
+    let total: usize = groups.values().map(Vec::len).sum();
+    doc.line(format!(
+        "{} in {}.",
+        count(total, "container"),
+        count(groups.len(), "stack")
+    ));
+    doc.blank();
+
+    let rows: Vec<Vec<String>> = groups
         .iter()
-        .map(|(stack, members)| Page {
-            path: format!("stacks/{}.md", slugs[stack]),
-            content: render_stack(stack, members),
+        .map(|(stack, members)| {
+            let slug = &slugs[stack];
+            let label = if *stack == STANDALONE {
+                "standalone"
+            } else {
+                slug
+            };
+            vec![
+                format!("[{}]({})", code(label), stack_path(slug)),
+                members.len().to_string(),
+            ]
         })
-        .collect()
+        .collect();
+    if !rows.is_empty() {
+        doc.table(&["Stack", "Containers"], &rows);
+    }
+    doc.0
+}
+
+fn count(number: usize, noun: &str) -> String {
+    if number == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{number} {noun}s")
+    }
 }
 
 /// Containers grouped by stack, each group sorted by container name.
@@ -344,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn one_page_is_rendered_per_stack() {
+    fn an_index_and_one_page_per_stack_are_rendered() {
         let containers = vec![
             container("shop-web-1", Some("shop")),
             container("shop-db-1", Some("shop")),
@@ -352,7 +409,40 @@ mod tests {
         ];
         let pages = render(&containers);
         let paths: Vec<_> = pages.iter().map(|p| p.path.as_str()).collect();
-        assert_eq!(paths, ["stacks/_standalone.md", "stacks/shop.md"]);
+        assert_eq!(
+            paths,
+            ["index.md", "stacks/_standalone.md", "stacks/shop.md"]
+        );
+    }
+
+    #[test]
+    fn the_index_links_every_stack_with_its_container_count() {
+        let containers = vec![
+            container("shop-web-1", Some("shop")),
+            container("shop-db-1", Some("shop")),
+            container("probe", None),
+        ];
+        let pages = render(&containers);
+        let content = &page(&pages, "index.md").content;
+        assert!(content.starts_with(&format!("{MARKER}\n")));
+        assert!(content.contains("3 containers in 2 stacks."));
+        assert!(content.contains("| [`shop`](stacks/shop.md) | 2 |"));
+        assert!(content.contains("| [`standalone`](stacks/_standalone.md) | 1 |"));
+    }
+
+    #[test]
+    fn an_empty_estate_still_gets_an_index() {
+        let pages = render(&[]);
+        assert_eq!(pages.len(), 1);
+        assert!(pages[0].content.contains("0 containers in 0 stacks."));
+    }
+
+    #[test]
+    fn singular_counts_are_not_pluralised() {
+        let pages = render(&[container("a", Some("s"))]);
+        assert!(page(&pages, "index.md")
+            .content
+            .contains("1 container in 1 stack."));
     }
 
     #[test]
