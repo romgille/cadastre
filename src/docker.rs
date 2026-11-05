@@ -127,8 +127,8 @@ fn check(status: u16, path: &str) -> Result<()> {
         200..=299 => Ok(()),
         403 => bail!(
             "GET {path} was refused (403). If a socket proxy is in front of Docker, \
-             it must allow the section: CONTAINERS=1 for containers, EVENTS=1 and \
-             NETWORKS=1 for the event stream"
+             it must allow the sections cadastre reads: CONTAINERS=1 for the \
+             container list and inspection, EVENTS=1 for the event stream"
         ),
         other => bail!("GET {path} failed with HTTP status {other}"),
     }
