@@ -11,6 +11,7 @@ pub mod model;
 pub mod output;
 pub mod render;
 pub mod sanitize;
+pub mod timefmt;
 
 /// Version of the running build, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
