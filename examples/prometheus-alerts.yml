@@ -1,0 +1,39 @@
+# Example alert rules for cadastre. Adjust the thresholds to your
+# CADASTRE_RECONCILE_SECONDS (default 3600 s).
+groups:
+  - name: cadastre
+    rules:
+      # The service has not published anything for two reconcile intervals.
+      - alert: CadastreStale
+        expr: time() - cadastre_last_success_timestamp_seconds > 7200
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "cadastre has not published successfully for over two hours"
+
+      # The last run failed (Docker unreachable, guard tripped, folder missing...).
+      - alert: CadastreLastRunFailed
+        expr: cadastre_last_attempt_success == 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "The last cadastre run failed; see the container logs"
+
+      # No cadastre metrics at all: the service is down, or the textfile
+      # collector is not reading the folder. Without this rule, a dead service
+      # would simply stop producing alerts.
+      - alert: CadastreMetricsAbsent
+        expr: absent(cadastre_build_info)
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "No cadastre metrics are being reported"
+
+      # The service is running but has never succeeded since it started.
+      # The success series is deliberately absent until the first success.
+      - alert: CadastreNeverSucceeded
+        expr: cadastre_build_info unless ignoring(version) cadastre_last_success_timestamp_seconds
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "cadastre is running but has not completed a single successful run"
