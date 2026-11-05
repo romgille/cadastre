@@ -1,0 +1,29 @@
+{
+  "Id": "c4d2e0f8a6b4c2d0e8f6a4b2c0d8e6f4a2b0c8d6e4f2a0b8c6d4e2f0a8b6c4d2",
+  "Name": "/uptime-probe",
+  "Image": "sha256:cccccccccccc1111111111112222222222223333333333334444444444447777",
+  "Config": {
+    "Hostname": "LEAK-probe-hostname",
+    "Image": "ghcr.io/example/probe:1.0",
+    "Env": ["PROBE_TOKEN=LEAK-probe-token", "TARGET=https://status.example.com"],
+    "Cmd": ["--basic-auth=probe:LEAK-probe-password"],
+    "ExposedPorts": {"9115/tcp": {}},
+    "Labels": {
+      "org.opencontainers.image.title": "Uptime probe",
+      "monitoring.webhook": "https://hooks.example.com/LEAK-webhook-secret"
+    }
+  },
+  "HostConfig": {
+    "RestartPolicy": {"Name": "", "MaximumRetryCount": 0},
+    "NetworkMode": "bridge",
+    "PortBindings": {"9115/tcp": [{"HostIp": "", "HostPort": "9115"}]}
+  },
+  "Mounts": [
+    {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "Mode": "", "RW": true}
+  ],
+  "NetworkSettings": {
+    "Networks": {
+      "bridge": {"IPAddress": "172.17.0.2"}
+    }
+  }
+}

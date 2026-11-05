@@ -1,0 +1,37 @@
+{
+  "Id": "9b7e5d3c1a2f4e6d8c0b1a3f5e7d9c2b4a6f8e0d1c3b5a7f9e2d4c6b8a0f1e3d",
+  "Name": "/shop-db-1",
+  "Image": "sha256:bbbbbbbbbbbb1111111111112222222222223333333333334444444444446666",
+  "Config": {
+    "Hostname": "LEAK-db-hostname",
+    "Image": "postgres:17.2",
+    "Env": [
+      "POSTGRES_USER=shop",
+      "POSTGRES_PASSWORD=LEAK-postgres-password",
+      "POSTGRES_DB=shop",
+      "PGDATA=/var/lib/postgresql/data"
+    ],
+    "Cmd": ["postgres", "-c", "ssl_key_file=LEAK-ssl-key-path"],
+    "Entrypoint": ["docker-entrypoint.sh"],
+    "ExposedPorts": {"5432/tcp": {}},
+    "Labels": {
+      "com.docker.compose.project": "shop",
+      "com.docker.compose.service": "db",
+      "org.opencontainers.image.version": "17.2",
+      "backup.target": "LEAK-backup-credential"
+    }
+  },
+  "HostConfig": {
+    "RestartPolicy": {"Name": "always", "MaximumRetryCount": 0},
+    "NetworkMode": "shop_default",
+    "PortBindings": {}
+  },
+  "Mounts": [
+    {"Type": "volume", "Name": "shop_pgdata", "Source": "/var/lib/docker/volumes/shop_pgdata/_data", "Destination": "/var/lib/postgresql/data", "Driver": "local", "Mode": "z", "RW": true}
+  ],
+  "NetworkSettings": {
+    "Networks": {
+      "shop_default": {"IPAddress": "172.20.0.2"}
+    }
+  }
+}
