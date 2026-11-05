@@ -398,7 +398,7 @@ fn mount_row(mount: &Mount) -> Vec<String> {
 
 /// An inline code span that survives any content: control characters become
 /// spaces and the fence is longer than any backtick run inside the text.
-fn code(text: &str) -> String {
+pub(crate) fn code(text: &str) -> String {
     let flat: String = text
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })

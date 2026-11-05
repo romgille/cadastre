@@ -5,6 +5,7 @@
 //! `main.rs` only wires them together.
 
 pub mod config;
+pub mod diff;
 pub mod fsutil;
 pub mod log;
 pub mod model;
