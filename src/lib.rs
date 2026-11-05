@@ -4,6 +4,7 @@
 //! The crate is split in small modules with one job each. The binary in
 //! `main.rs` only wires them together.
 
+pub mod changelog;
 pub mod config;
 pub mod diff;
 pub mod fsutil;
