@@ -7,6 +7,7 @@
 pub mod config;
 pub mod log;
 pub mod model;
+pub mod render;
 pub mod sanitize;
 
 /// Version of the running build, taken from `Cargo.toml`.

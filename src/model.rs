@@ -50,6 +50,16 @@ impl Container {
     pub fn stack(&self) -> &str {
         self.project.as_deref().unwrap_or(STANDALONE)
     }
+
+    /// The first twelve characters of the image ID, without the `sha256:`
+    /// prefix: enough to tell two images apart at a glance.
+    pub fn short_image_id(&self) -> &str {
+        let id = self
+            .image_id
+            .strip_prefix("sha256:")
+            .unwrap_or(&self.image_id);
+        id.get(..12).unwrap_or(id)
+    }
 }
 
 /// A port of a container, published on the host or merely exposed.
@@ -106,6 +116,15 @@ mod tests {
     #[test]
     fn other_containers_fall_into_the_standalone_group() {
         assert_eq!(container(None).stack(), STANDALONE);
+    }
+
+    #[test]
+    fn the_short_image_id_drops_the_algorithm_and_is_twelve_characters_long() {
+        let mut c = container(None);
+        c.image_id = "sha256:0123456789abcdef0123".into();
+        assert_eq!(c.short_image_id(), "0123456789ab");
+        c.image_id = "abc".into();
+        assert_eq!(c.short_image_id(), "abc");
     }
 
     #[test]
