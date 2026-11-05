@@ -5,6 +5,7 @@
 //! `main.rs` only wires them together.
 
 pub mod config;
+pub mod log;
 
 /// Version of the running build, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
