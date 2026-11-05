@@ -1,6 +1,8 @@
 //! Helpers shared by the integration tests.
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
+pub mod mock_docker;
+
 use std::fs;
 use std::path::PathBuf;
 
