@@ -20,3 +20,6 @@ expect_used = "deny"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[dependencies]
+anyhow = "1.0.104"

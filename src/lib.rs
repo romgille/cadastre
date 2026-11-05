@@ -4,6 +4,8 @@
 //! The crate is split in small modules with one job each. The binary in
 //! `main.rs` only wires them together.
 
+pub mod config;
+
 /// Version of the running build, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
