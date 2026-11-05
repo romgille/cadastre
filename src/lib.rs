@@ -9,6 +9,7 @@ pub mod config;
 pub mod diff;
 pub mod docker;
 pub mod fsutil;
+pub mod heartbeat;
 pub mod log;
 pub mod metrics;
 pub mod model;
