@@ -6,6 +6,7 @@
 
 pub mod changelog;
 pub mod config;
+pub mod daemon;
 pub mod diff;
 pub mod docker;
 pub mod fsutil;
