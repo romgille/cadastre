@@ -51,6 +51,12 @@ impl Container {
         self.project.as_deref().unwrap_or(STANDALONE)
     }
 
+    /// Whether the container shares the host's network stack, which exposes
+    /// every port it listens on.
+    pub fn uses_host_network(&self) -> bool {
+        self.network_mode == "host"
+    }
+
     /// The first twelve characters of the image ID, without the `sha256:`
     /// prefix: enough to tell two images apart at a glance.
     pub fn short_image_id(&self) -> &str {
@@ -72,6 +78,18 @@ pub struct Port {
     pub host_ip: Option<String>,
     /// Host port. `None` when not published.
     pub host_port: Option<u16>,
+}
+
+impl Port {
+    pub fn is_published(&self) -> bool {
+        self.host_port.is_some()
+    }
+
+    /// Published on every interface of the host, rather than on a specific
+    /// address such as `127.0.0.1` or a private network address.
+    pub fn is_on_all_interfaces(&self) -> bool {
+        self.is_published() && matches!(self.host_ip.as_deref(), None | Some("0.0.0.0" | "::"))
+    }
 }
 
 /// A mount of a container.
@@ -125,6 +143,32 @@ mod tests {
         assert_eq!(c.short_image_id(), "0123456789ab");
         c.image_id = "abc".into();
         assert_eq!(c.short_image_id(), "abc");
+    }
+
+    #[test]
+    fn only_published_wildcard_bindings_count_as_all_interfaces() {
+        let port = |ip: Option<&str>, host_port: Option<u16>| Port {
+            container_port: 80,
+            protocol: "tcp".into(),
+            host_ip: ip.map(String::from),
+            host_port,
+        };
+        assert!(port(Some("0.0.0.0"), Some(80)).is_on_all_interfaces());
+        assert!(port(Some("::"), Some(80)).is_on_all_interfaces());
+        assert!(!port(Some("127.0.0.1"), Some(80)).is_on_all_interfaces());
+        assert!(!port(Some("10.0.0.5"), Some(80)).is_on_all_interfaces());
+        assert!(
+            !port(None, None).is_on_all_interfaces(),
+            "unpublished ports are not exposed"
+        );
+    }
+
+    #[test]
+    fn host_networking_is_detected() {
+        let mut c = container(None);
+        assert!(!c.uses_host_network());
+        c.network_mode = "host".into();
+        assert!(c.uses_host_network());
     }
 
     #[test]

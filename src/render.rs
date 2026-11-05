@@ -86,7 +86,50 @@ fn render_index(
     if !rows.is_empty() {
         doc.table(&["Stack", "Containers"], &rows);
     }
+
+    doc.line("## Warnings");
+    doc.blank();
+    let warnings = warnings(groups);
+    if warnings.is_empty() {
+        doc.line("None.");
+    }
+    for warning in warnings {
+        doc.line(format!("- {warning}"));
+    }
     doc.0
+}
+
+/// Exposure worth a second look. Listed in the index so that they are seen
+/// without opening every stack page.
+fn warnings(groups: &BTreeMap<&str, Vec<&Container>>) -> Vec<String> {
+    let mut found = Vec::new();
+    for container in groups.values().flatten() {
+        for port in container
+            .ports
+            .iter()
+            .filter(|port| port.is_on_all_interfaces())
+        {
+            let address = port
+                .host_ip
+                .as_deref()
+                .zip(port.host_port)
+                .map(|(ip, host_port)| host_address(ip, host_port))
+                .unwrap_or_default();
+            found.push(format!(
+                "{} publishes {} on all interfaces ({}).",
+                code(&container.name),
+                code(&format!("{}/{}", port.container_port, port.protocol)),
+                code(&address),
+            ));
+        }
+        if container.uses_host_network() {
+            found.push(format!(
+                "{} uses host networking: every port it listens on is exposed on the host.",
+                code(&container.name)
+            ));
+        }
+    }
+    found
 }
 
 fn count(number: usize, noun: &str) -> String {
@@ -264,6 +307,9 @@ fn render_container(doc: &mut Doc, c: &Container) {
 
 fn port_row(port: &Port) -> Vec<String> {
     let published = match (&port.host_ip, port.host_port) {
+        (Some(ip), Some(host_port)) if port.is_on_all_interfaces() => {
+            format!("{} (all interfaces)", code(&host_address(ip, host_port)))
+        }
         (Some(ip), Some(host_port)) => code(&host_address(ip, host_port)),
         _ => "not published".to_string(),
     };
@@ -489,6 +535,50 @@ mod tests {
         );
         // Containers are sorted by name whatever the input order.
         assert!(content.find("## `shop-db-1`") < content.find("## `shop-web-1`"));
+    }
+
+    fn published(ip: &str, host_port: u16) -> Port {
+        Port {
+            container_port: 80,
+            protocol: "tcp".into(),
+            host_ip: Some(ip.into()),
+            host_port: Some(host_port),
+        }
+    }
+
+    #[test]
+    fn a_clean_estate_has_no_warnings() {
+        let mut web = container("web", Some("s"));
+        web.ports = vec![published("127.0.0.1", 8080)];
+        let pages = render(&[web]);
+        let content = &page(&pages, "index.md").content;
+        assert!(content.contains("## Warnings\n\nNone.\n"), "{content}");
+    }
+
+    #[test]
+    fn ports_published_on_all_interfaces_are_flagged_in_the_index_and_the_stack() {
+        let mut web = container("web", Some("s"));
+        web.ports = vec![published("0.0.0.0", 8080)];
+        let pages = render(&[web]);
+        let index = &page(&pages, "index.md").content;
+        assert!(
+            index.contains("- `web` publishes `80/tcp` on all interfaces (`0.0.0.0:8080`)."),
+            "{index}"
+        );
+        let stack = &page(&pages, "stacks/s.md").content;
+        assert!(
+            stack.contains("| `80/tcp` | `0.0.0.0:8080` (all interfaces) |"),
+            "{stack}"
+        );
+    }
+
+    #[test]
+    fn host_networking_is_flagged_in_the_index() {
+        let mut agent = container("agent", None);
+        agent.network_mode = "host".into();
+        let pages = render(&[agent]);
+        let index = &page(&pages, "index.md").content;
+        assert!(index.contains("- `agent` uses host networking"), "{index}");
     }
 
     #[test]
