@@ -1,0 +1,34 @@
+# Policy checked by `cargo deny check` (see .github/workflows/security.yml).
+
+[graph]
+all-features = true
+
+[advisories]
+# Known vulnerabilities and unmaintained crates fail the build.
+yanked = "deny"
+
+[licenses]
+# cadastre is AGPL-3.0-or-later; every dependency must be compatible with it.
+# A new licence fails the build on purpose: adding one is a decision.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    "AGPL-3.0-or-later",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# No TLS stack: the Docker API is reached over a private network. If one is
+# ever added, it should be a deliberate decision.
+deny = [
+    { name = "openssl" },
+    { name = "openssl-sys" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
