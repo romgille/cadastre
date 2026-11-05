@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::ErrorKind;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::changelog;
 use crate::config::Config;
@@ -23,9 +23,14 @@ pub struct Outcome {
 }
 
 /// Reads the containers from Docker and publishes them.
-pub fn run_once(config: &Config, docker: &Docker, now: u64) -> Result<Outcome> {
+pub fn run_once(
+    config: &Config,
+    docker: &Docker,
+    now: u64,
+    accept_shrink: bool,
+) -> Result<Outcome> {
     let containers = docker.containers()?;
-    publish(config, &containers, now)
+    publish(config, &containers, now, accept_shrink)
 }
 
 /// Publishes `containers`: pages, then changelog, then snapshot.
@@ -34,8 +39,16 @@ pub fn run_once(config: &Config, docker: &Docker, now: u64) -> Result<Outcome> {
 /// a person, a corrupt snapshot) is checked before the first byte is written.
 /// The snapshot is saved last: a crash in between repeats a changelog entry
 /// on the next run, which is better than losing one.
-pub fn publish(config: &Config, containers: &[Container], now: u64) -> Result<Outcome> {
+pub fn publish(
+    config: &Config,
+    containers: &[Container],
+    now: u64,
+    accept_shrink: bool,
+) -> Result<Outcome> {
     let previous = Snapshot::load(&config.state_dir)?;
+    if !accept_shrink {
+        check_shrink(config, previous.as_ref(), containers.len())?;
+    }
     let out = OutDir::new(&config.out_dir);
 
     let changelog_text = changelog_update(&out, previous.as_ref(), containers, now)?;
@@ -82,4 +95,28 @@ fn changelog_update(
         Err(error) => return Err(error).with_context(|| format!("cannot read {}", path.display())),
     };
     changelog::prepend(existing.as_deref(), &entry).map(Some)
+}
+
+/// Refuses a result that is implausibly small compared with the last
+/// snapshot.
+///
+/// A socket proxy that lost its permissions, a wrong endpoint or a restarting
+/// daemon can all answer with an empty list and no error. Publishing that
+/// would delete every page and record a history of "everything was removed"
+/// that never happened. Failing instead is loud: the run is marked failed and
+/// the success timestamp stops advancing.
+fn check_shrink(config: &Config, previous: Option<&Snapshot>, now_count: usize) -> Result<()> {
+    let percent = config.shrink_guard_percent as usize;
+    let Some(previous) = previous else {
+        return Ok(());
+    };
+    let before = previous.containers.len();
+    if percent == 0 || before == 0 || now_count * 100 >= before * percent {
+        return Ok(());
+    }
+    bail!(
+        "refusing to publish: Docker reports {now_count} container(s), down from {before} \
+         (the guard allows a drop to {percent}%). This usually means a broken socket proxy or \
+         a wrong endpoint. If the drop is real, run `cadastre once --accept-shrink`"
+    )
 }

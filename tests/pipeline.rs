@@ -53,7 +53,7 @@ fn all() -> Vec<Container> {
 #[test]
 fn the_first_run_writes_pages_a_changelog_and_a_snapshot() {
     let env = Env::new();
-    let outcome = publish(&env.config, &all(), 1_700_000_000).unwrap();
+    let outcome = publish(&env.config, &all(), 1_700_000_000, false).unwrap();
     assert_eq!(outcome.containers, 4);
     assert!(outcome.changelog_entry);
     assert!(env.exists("index.md"));
@@ -70,7 +70,7 @@ fn the_first_run_writes_pages_a_changelog_and_a_snapshot() {
 #[test]
 fn nothing_written_anywhere_contains_a_canary() {
     let env = Env::new();
-    publish(&env.config, &all(), 1).unwrap();
+    publish(&env.config, &all(), 1, false).unwrap();
     for root in [&env.config.out_dir, &env.config.state_dir] {
         for entry in walk(root) {
             let text = fs::read_to_string(&entry).unwrap();
@@ -82,9 +82,9 @@ fn nothing_written_anywhere_contains_a_canary() {
 #[test]
 fn an_unchanged_second_run_touches_nothing() {
     let env = Env::new();
-    publish(&env.config, &all(), 1_700_000_000).unwrap();
+    publish(&env.config, &all(), 1_700_000_000, false).unwrap();
     let changelog = env.out("changelog.md");
-    let outcome = publish(&env.config, &all(), 1_700_003_600).unwrap();
+    let outcome = publish(&env.config, &all(), 1_700_003_600, false).unwrap();
     assert!(!outcome.report.has_changes());
     assert!(!outcome.changelog_entry);
     assert_eq!(env.out("changelog.md"), changelog);
@@ -93,11 +93,11 @@ fn an_unchanged_second_run_touches_nothing() {
 #[test]
 fn a_change_updates_the_page_and_prepends_a_changelog_entry() {
     let env = Env::new();
-    publish(&env.config, &all(), 1_700_000_000).unwrap();
+    publish(&env.config, &all(), 1_700_000_000, false).unwrap();
     let mut changed = all();
     changed.retain(|c| c.name != "uptime-probe");
     changed[0].image_id = "sha256:ffffffffffffffffffff".into();
-    let outcome = publish(&env.config, &changed, 1_700_003_600).unwrap();
+    let outcome = publish(&env.config, &changed, 1_700_003_600, false).unwrap();
     assert!(outcome.changelog_entry);
     let changelog = env.out("changelog.md");
     let newest = changelog.find("2023-11-14T23:13:20Z").unwrap();
@@ -113,10 +113,10 @@ fn a_change_updates_the_page_and_prepends_a_changelog_entry() {
 #[test]
 fn a_stack_that_disappears_loses_its_page() {
     let env = Env::new();
-    publish(&env.config, &all(), 1).unwrap();
+    publish(&env.config, &all(), 1, false).unwrap();
     let mut standalone_only = all();
     standalone_only.retain(|c| c.project.is_none());
-    publish(&env.config, &standalone_only, 2).unwrap();
+    publish(&env.config, &standalone_only, 2, false).unwrap();
     assert!(!env.exists("stacks/shop.md"));
     assert!(env.exists("stacks/_standalone.md") || env.exists("stacks/standalone.md"));
 }
@@ -125,7 +125,7 @@ fn a_stack_that_disappears_loses_its_page() {
 fn a_changelog_written_by_a_person_stops_the_run_before_anything_is_written() {
     let env = Env::new();
     fs::write(env.config.out_dir.join("changelog.md"), "# mine\n").unwrap();
-    let error = publish(&env.config, &all(), 1).unwrap_err();
+    let error = publish(&env.config, &all(), 1, false).unwrap_err();
     assert!(format!("{error:#}").contains("not generated"), "{error:#}");
     assert!(
         !env.exists("index.md"),
@@ -138,7 +138,7 @@ fn a_changelog_written_by_a_person_stops_the_run_before_anything_is_written() {
 fn a_corrupt_snapshot_stops_the_run_before_anything_is_written() {
     let env = Env::new();
     fs::write(env.config.state_dir.join("snapshot.json"), "garbage").unwrap();
-    assert!(publish(&env.config, &all(), 1).is_err());
+    assert!(publish(&env.config, &all(), 1, false).is_err());
     assert!(!env.exists("index.md"));
 }
 
@@ -146,7 +146,7 @@ fn a_corrupt_snapshot_stops_the_run_before_anything_is_written() {
 fn a_missing_output_folder_fails_and_leaves_no_snapshot() {
     let env = Env::new();
     fs::remove_dir_all(&env.config.out_dir).unwrap();
-    assert!(publish(&env.config, &all(), 1).is_err());
+    assert!(publish(&env.config, &all(), 1, false).is_err());
     assert!(
         !env.config.state_dir.join("snapshot.json").exists(),
         "a snapshot for output that was never written would hide the change"
@@ -164,4 +164,58 @@ fn walk(root: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+fn drop_to(count: usize) -> Vec<Container> {
+    all().into_iter().take(count).collect()
+}
+
+#[test]
+fn an_empty_answer_after_a_populated_run_is_refused_and_changes_nothing() {
+    let env = Env::new();
+    publish(&env.config, &all(), 1, false).unwrap();
+    let index = env.out("index.md");
+    let changelog = env.out("changelog.md");
+    let error = publish(&env.config, &[], 2, false).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(message.contains("refusing to publish"), "{message}");
+    assert!(message.contains("--accept-shrink"), "{message}");
+    assert_eq!(env.out("index.md"), index);
+    assert_eq!(env.out("changelog.md"), changelog);
+}
+
+#[test]
+fn a_drop_below_the_threshold_is_refused() {
+    let env = Env::new();
+    publish(&env.config, &all(), 1, false).unwrap();
+    assert!(publish(&env.config, &drop_to(1), 2, false).is_err());
+}
+
+#[test]
+fn a_drop_to_exactly_the_threshold_is_allowed() {
+    let env = Env::new();
+    publish(&env.config, &all(), 1, false).unwrap();
+    publish(&env.config, &drop_to(2), 2, false).unwrap();
+}
+
+#[test]
+fn accepting_the_shrink_publishes_it() {
+    let env = Env::new();
+    publish(&env.config, &all(), 1, false).unwrap();
+    publish(&env.config, &[], 2, true).unwrap();
+    assert!(env.out("changelog.md").contains("- Removed"));
+}
+
+#[test]
+fn the_guard_can_be_disabled() {
+    let mut env = Env::new();
+    publish(&env.config, &all(), 1, false).unwrap();
+    env.config.shrink_guard_percent = 0;
+    publish(&env.config, &[], 2, false).unwrap();
+}
+
+#[test]
+fn the_first_run_is_never_blocked_by_the_guard() {
+    let env = Env::new();
+    publish(&env.config, &[], 1, false).unwrap();
 }
