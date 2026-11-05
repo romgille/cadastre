@@ -10,6 +10,7 @@ pub mod diff;
 pub mod docker;
 pub mod fsutil;
 pub mod log;
+pub mod metrics;
 pub mod model;
 pub mod output;
 pub mod render;
