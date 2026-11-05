@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod log;
+pub mod model;
 
 /// Version of the running build, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

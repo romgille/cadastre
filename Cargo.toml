@@ -23,3 +23,4 @@ unimplemented = "deny"
 
 [dependencies]
 anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
