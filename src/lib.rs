@@ -17,6 +17,7 @@ pub mod output;
 pub mod pipeline;
 pub mod render;
 pub mod sanitize;
+pub mod schedule;
 pub mod snapshot;
 pub mod timefmt;
 
