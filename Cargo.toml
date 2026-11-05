@@ -25,3 +25,6 @@ unimplemented = "deny"
 anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+
+[dev-dependencies]
+tempfile = "3.27.0"
