@@ -114,6 +114,7 @@ mod tests {
     fn container(name: &str, project: Option<&str>) -> Container {
         Container {
             name: name.into(),
+            host: None,
             image: "nginx:1".into(),
             image_id: "sha256:aaaaaaaaaaaaaaaa".into(),
             version: None,

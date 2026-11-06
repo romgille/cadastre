@@ -17,12 +17,22 @@ const DEFAULT_DEBOUNCE_SECONDS: u64 = 30;
 const DEFAULT_RECONCILE_SECONDS: u64 = 3600;
 const DEFAULT_SHRINK_GUARD_PERCENT: u32 = 50;
 
+/// One Docker API endpoint to document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoint {
+    /// Friendly name shown next to the containers of this endpoint. Always
+    /// set when several endpoints are configured.
+    pub name: Option<String>,
+    /// Base URL of the Docker API. Never ends with a slash.
+    pub url: String,
+}
+
 /// Everything cadastre needs to run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    /// Base URL of the Docker API, normally a read-only socket proxy such as
-    /// `http://socket-proxy:2375`. Never ends with a slash.
-    pub docker_url: String,
+    /// Docker API endpoints, normally read-only socket proxies such as
+    /// `http://socket-proxy:2375`. There is always at least one.
+    pub docker_endpoints: Vec<Endpoint>,
     /// Directory that receives the generated Markdown.
     pub out_dir: PathBuf,
     /// Directory for persistent state (the snapshot of the previous run).
@@ -79,7 +89,7 @@ impl Config {
         };
 
         Ok(Self {
-            docker_url: normalize_url(&required("DOCKER_URL")?)?,
+            docker_endpoints: parse_endpoints(&required("DOCKER_URL")?)?,
             out_dir: PathBuf::from(required("OUT_DIR")?),
             state_dir: PathBuf::from(required("STATE_DIR")?),
             metrics_dir: get("METRICS_DIR").map(PathBuf::from),
@@ -118,6 +128,60 @@ where
     lookup(&format!("{ENV_PREFIX}HEARTBEAT_FILE"))
         .filter(|v| !v.trim().is_empty())
         .map_or_else(|| PathBuf::from(DEFAULT_HEARTBEAT_FILE), PathBuf::from)
+}
+
+/// Parses a comma-separated list of `url` or `name=url` entries. Unnamed
+/// entries are named after their host and port when there are several.
+fn parse_endpoints(raw: &str) -> Result<Vec<Endpoint>> {
+    let mut endpoints = Vec::new();
+    for entry in raw.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let (name, url) = if entry.starts_with("http://") || entry.starts_with("https://") {
+            (None, entry)
+        } else if let Some((name, url)) = entry.split_once('=') {
+            if !valid_endpoint_name(name.trim()) {
+                bail!(
+                    "{ENV_PREFIX}DOCKER_URL: an endpoint name must be 1 to 64 characters from \
+                     A-Z, a-z, 0-9, '.', '_' and '-'"
+                );
+            }
+            (Some(name.trim().to_string()), url.trim())
+        } else {
+            bail!("{ENV_PREFIX}DOCKER_URL must start with http://");
+        };
+        endpoints.push(Endpoint {
+            name,
+            url: normalize_url(url)?,
+        });
+    }
+    if endpoints.is_empty() {
+        bail!("{ENV_PREFIX}DOCKER_URL must hold at least one endpoint");
+    }
+    if endpoints.len() > 1 {
+        for endpoint in &mut endpoints {
+            if endpoint.name.is_none() {
+                let rest = endpoint
+                    .url
+                    .strip_prefix("http://")
+                    .unwrap_or(&endpoint.url);
+                let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+                endpoint.name = Some(authority.to_string());
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for name in endpoints.iter().filter_map(|e| e.name.as_deref()) {
+            if !seen.insert(name) {
+                bail!("{ENV_PREFIX}DOCKER_URL: the endpoint name {name:?} is used twice");
+            }
+        }
+    }
+    Ok(endpoints)
+}
+
+fn valid_endpoint_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 fn normalize_url(raw: &str) -> Result<String> {
@@ -185,7 +249,13 @@ mod tests {
     #[test]
     fn minimal_configuration_gets_documented_defaults() {
         let config = Config::from_lookup(env(&REQUIRED)).unwrap();
-        assert_eq!(config.docker_url, "http://socket-proxy:2375");
+        assert_eq!(
+            config.docker_endpoints,
+            [Endpoint {
+                name: None,
+                url: "http://socket-proxy:2375".into()
+            }]
+        );
         assert_eq!(config.out_dir, PathBuf::from("/out"));
         assert_eq!(config.state_dir, PathBuf::from("/state"));
         assert_eq!(config.metrics_dir, None);
@@ -248,7 +318,7 @@ mod tests {
             ("STATE_DIR", "/s"),
         ];
         let config = Config::from_lookup(env(&pairs)).unwrap();
-        assert_eq!(config.docker_url, "http://proxy:2375");
+        assert_eq!(config.docker_endpoints[0].url, "http://proxy:2375");
     }
 
     #[test]
@@ -331,5 +401,48 @@ mod tests {
             ("STATE_DIR", "/state"),
         ];
         assert!(Config::from_lookup(env(&pairs)).is_ok());
+    }
+
+    fn endpoints(value: &str) -> Result<Vec<Endpoint>> {
+        let pairs = [
+            ("DOCKER_URL", value),
+            ("OUT_DIR", "/o"),
+            ("STATE_DIR", "/s"),
+        ];
+        Config::from_lookup(env(&pairs)).map(|config| config.docker_endpoints)
+    }
+
+    #[test]
+    fn several_endpoints_can_be_named_or_named_after_their_host() {
+        let found = endpoints("nas=http://nas:2375/, http://10.0.0.2:2375").unwrap();
+        let names: Vec<_> = found.iter().map(|e| e.name.as_deref()).collect();
+        assert_eq!(names, [Some("nas"), Some("10.0.0.2:2375")]);
+        assert_eq!(found[0].url, "http://nas:2375");
+    }
+
+    #[test]
+    fn a_single_unnamed_endpoint_stays_unnamed() {
+        assert_eq!(endpoints("http://a:2375").unwrap()[0].name, None);
+    }
+
+    #[test]
+    fn a_single_endpoint_can_be_named() {
+        let found = endpoints("lab=http://a:2375").unwrap();
+        assert_eq!(found[0].name.as_deref(), Some("lab"));
+    }
+
+    #[test]
+    fn duplicate_or_invalid_endpoints_are_rejected() {
+        for value in [
+            "a=http://x:1,a=http://y:1",
+            "http://x:1,http://x:1",
+            "bad name=http://x:1",
+            "=http://x:1",
+            "a=unix:///var/run/docker.sock",
+            "a=http://x:1,ssh://user@host",
+            " , ",
+        ] {
+            assert!(endpoints(value).is_err(), "{value}");
+        }
     }
 }

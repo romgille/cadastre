@@ -20,6 +20,10 @@ pub const STANDALONE: &str = "_standalone";
 pub struct Container {
     /// Container name without the leading slash.
     pub name: String,
+    /// Friendly name of the Docker endpoint the container runs on. `None`
+    /// when a single, unnamed endpoint is configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     /// Image reference the container was created from, e.g. `nginx:1.27`.
     pub image: String,
     /// Content-addressed image ID (`sha256:...`). Unlike the tag, it changes
@@ -46,6 +50,15 @@ pub struct Container {
 }
 
 impl Container {
+    /// The name that identifies the container among all endpoints:
+    /// `name@host`, or just `name` without a host.
+    pub fn display_name(&self) -> String {
+        match &self.host {
+            Some(host) => format!("{}@{host}", self.name),
+            None => self.name.clone(),
+        }
+    }
+
     /// The group this container is documented under.
     pub fn stack(&self) -> &str {
         self.project.as_deref().unwrap_or(STANDALONE)
@@ -111,6 +124,7 @@ mod tests {
     fn container(project: Option<&str>) -> Container {
         Container {
             name: "web-1".into(),
+            host: None,
             image: "nginx:1.27".into(),
             image_id: "sha256:abc".into(),
             version: None,

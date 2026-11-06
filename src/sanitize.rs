@@ -45,6 +45,7 @@ fn build(inspect: &Value, name: &str) -> Result<Container> {
 
     Ok(Container {
         name: name.to_string(),
+        host: None,
         image: clean(text(inspect, "/Config/Image").unwrap_or_default()),
         image_id: clean(text(inspect, "/Image").unwrap_or_default()),
         version: label(LABEL_VERSION),

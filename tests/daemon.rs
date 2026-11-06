@@ -56,7 +56,7 @@ impl Running {
         let handle = {
             let config = config.clone();
             let shutdown = Arc::clone(&shutdown);
-            let docker = Docker::new(&mock.url);
+            let docker = [Docker::new(&mock.url)];
             let timing = Timing {
                 retry: Duration::from_millis(200),
                 reconnect: Duration::from_millis(100),
@@ -214,4 +214,59 @@ fn shutdown_is_prompt() {
     let started = Instant::now();
     drop(daemon);
     assert!(started.elapsed() < Duration::from_secs(3));
+}
+
+#[test]
+fn an_endpoint_that_was_down_at_startup_is_picked_up_once_it_recovers() {
+    let dir = tempfile::tempdir().unwrap();
+    for sub in ["out", "state"] {
+        fs::create_dir(dir.path().join(sub)).unwrap();
+    }
+    let root = dir.path().to_path_buf();
+    let nas = MockDocker::with_containers(&[fixture("web.json")]);
+    let vps = MockDocker::with_containers(&[fixture("standalone.json")]);
+    vps.set_status(Some(500));
+    let mut config = Config::from_lookup(|key| match key {
+        "CADASTRE_DOCKER_URL" => Some(nas.url.clone()),
+        "CADASTRE_OUT_DIR" => Some(root.join("out").display().to_string()),
+        "CADASTRE_STATE_DIR" => Some(root.join("state").display().to_string()),
+        "CADASTRE_HEARTBEAT_FILE" => Some(root.join("heartbeat").display().to_string()),
+        "CADASTRE_RECONCILE_SECONDS" => Some("3600".to_string()),
+        _ => None,
+    })
+    .unwrap();
+    config.debounce = Duration::from_millis(100);
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let handle = {
+        let config = config.clone();
+        let shutdown = Arc::clone(&shutdown);
+        let dockers = [
+            Docker::named(&nas.url, Some("nas")),
+            Docker::named(&vps.url, Some("vps")),
+        ];
+        let timing = Timing {
+            retry: Duration::from_millis(200),
+            reconnect: Duration::from_millis(100),
+            tick: Duration::from_millis(50),
+        };
+        thread::spawn(move || run(&config, &dockers, &timing, &shutdown).unwrap())
+    };
+    let index = config.out_dir.join("index.md");
+    wait_for("the partial publication", || {
+        fs::read_to_string(&index).is_ok_and(|text| text.contains("unreachable"))
+    });
+    wait_for("the failing endpoint to be listened to", || {
+        vps.state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .any(|path| path.starts_with("/events"))
+    });
+    vps.set_status(None);
+    wait_for("the recovered endpoint", || {
+        fs::read_to_string(&index).is_ok_and(|text| text.contains("uptime-probe"))
+    });
+    shutdown.store(true, Ordering::Relaxed);
+    handle.join().unwrap();
 }

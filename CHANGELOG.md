@@ -4,6 +4,14 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `CADASTRE_DOCKER_URL` accepts several `[name=]url` endpoints. Containers are
+  aggregated with their server shown, and an unreachable endpoint no longer
+  prevents the others from being documented.
+
 ## [0.1.0]
 
 First release.

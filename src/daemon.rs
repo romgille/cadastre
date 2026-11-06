@@ -48,17 +48,20 @@ const HEARTBEAT_EVERY: Duration = Duration::from_secs(5);
 /// continue at all.
 pub fn run(
     config: &Config,
-    docker: &Docker,
+    dockers: &[Docker],
     timing: &Timing,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<()> {
     let (events, wakeups) = mpsc::channel();
-    spawn_event_listener(
-        docker.clone(),
-        events,
-        Arc::clone(shutdown),
-        timing.reconnect,
-    );
+    for docker in dockers {
+        spawn_event_listener(
+            docker.clone(),
+            events.clone(),
+            Arc::clone(shutdown),
+            timing.reconnect,
+        );
+    }
+    drop(events);
 
     let mut scheduler = Scheduler::new(
         Instant::now(),
@@ -89,7 +92,7 @@ pub fn run(
         let mut ran = false;
         if scheduler.is_due(Instant::now()) {
             scheduler.started();
-            last_run_ok = run_and_record(config, docker, &mut status);
+            last_run_ok = run_and_record(config, dockers, &mut status);
             scheduler.finished(Instant::now(), last_run_ok);
             ran = true;
         }
@@ -107,9 +110,9 @@ pub fn run(
 }
 
 /// One run, with its logging and metrics. Returns whether it succeeded.
-fn run_and_record(config: &Config, docker: &Docker, status: &mut Status) -> bool {
+fn run_and_record(config: &Config, dockers: &[Docker], status: &mut Status) -> bool {
     let now = unix_now();
-    let succeeded = match run_once(config, docker, now, false) {
+    let succeeded = match run_once(config, dockers, now, false) {
         Ok(outcome) => {
             if outcome.report.has_changes() || outcome.changelog_entry {
                 log::info(format!(
@@ -145,6 +148,9 @@ fn spawn_event_listener(
     shutdown: Arc<AtomicBool>,
     reconnect: Duration,
 ) {
+    let label = docker
+        .host()
+        .map_or_else(String::new, |host| format!(" ({host})"));
     thread::spawn(move || {
         let mut first_connection = true;
         while !shutdown.load(Ordering::Relaxed) {
@@ -166,14 +172,17 @@ fn spawn_event_listener(
                             }
                             Ok(_) => {}
                             Err(error) => {
-                                log::warn(format!("event stream: {error:#}"));
+                                log::warn(format!("event stream{label}: {error:#}"));
                                 break;
                             }
                         }
                     }
-                    log::warn("event stream closed, reconnecting");
+                    log::warn(format!("event stream{label} closed, reconnecting"));
                 }
-                Err(error) => log::warn(format!("cannot open the event stream: {error:#}")),
+                Err(error) => {
+                    first_connection = false;
+                    log::warn(format!("cannot open the event stream{label}: {error:#}"));
+                }
             }
             thread::sleep(reconnect);
         }

@@ -39,15 +39,31 @@ pub struct Options {
     pub obsidian: bool,
 }
 
+/// Whether an endpoint answered during the run that produced the pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostStatus {
+    pub name: String,
+    pub reachable: bool,
+}
+
 /// Renders the index page and one page per stack.
 pub fn render(containers: &[Container], options: &Options) -> Vec<Page> {
+    render_with_hosts(containers, &[], options)
+}
+
+/// Like [`render`], and lists `hosts` with their status in the index.
+pub fn render_with_hosts(
+    containers: &[Container],
+    hosts: &[HostStatus],
+    options: &Options,
+) -> Vec<Page> {
     let options = *options;
     let groups = group_by_stack(containers);
     let slugs = assign_slugs(groups.keys().copied());
 
     let mut pages = vec![Page {
         path: INDEX_PATH.to_string(),
-        content: render_index(&groups, &slugs, options),
+        content: render_index(&groups, hosts, &slugs, options),
     }];
     pages.extend(groups.iter().map(|(stack, members)| Page {
         path: stack_path(&slugs[stack]),
@@ -90,6 +106,7 @@ fn stack_path(slug: &str) -> String {
 
 fn render_index(
     groups: &BTreeMap<&str, Vec<&Container>>,
+    hosts: &[HostStatus],
     slugs: &BTreeMap<&str, String>,
     options: Options,
 ) -> String {
@@ -119,6 +136,28 @@ fn render_index(
         .collect();
     if !rows.is_empty() {
         doc.table(&["Stack", "Containers"], &rows);
+    }
+
+    if !hosts.is_empty() {
+        doc.line("## Servers");
+        doc.blank();
+        let rows: Vec<Vec<String>> = hosts
+            .iter()
+            .map(|host| {
+                let containers = groups
+                    .values()
+                    .flatten()
+                    .filter(|c| c.host.as_deref() == Some(host.name.as_str()))
+                    .count();
+                let status = if host.reachable {
+                    "reachable"
+                } else {
+                    "unreachable (last known data)"
+                };
+                vec![code(&host.name), containers.to_string(), status.to_string()]
+            })
+            .collect();
+        doc.table(&["Server", "Containers", "Status"], &rows);
     }
 
     doc.line("## Warnings");
@@ -151,7 +190,7 @@ fn warnings(groups: &BTreeMap<&str, Vec<&Container>>) -> Vec<String> {
                 .unwrap_or_default();
             found.push(format!(
                 "{} publishes {} on all interfaces ({}).",
-                code(&container.name),
+                code(&container.display_name()),
                 code(&format!("{}/{}", port.container_port, port.protocol)),
                 code(&address),
             ));
@@ -159,7 +198,7 @@ fn warnings(groups: &BTreeMap<&str, Vec<&Container>>) -> Vec<String> {
         if container.uses_host_network() {
             found.push(format!(
                 "{} uses host networking: every port it listens on is exposed on the host.",
-                code(&container.name)
+                code(&container.display_name())
             ));
         }
     }
@@ -181,7 +220,7 @@ fn group_by_stack(containers: &[Container]) -> BTreeMap<&str, Vec<&Container>> {
         groups.entry(container.stack()).or_default().push(container);
     }
     for members in groups.values_mut() {
-        members.sort_by(|a, b| a.name.cmp(&b.name));
+        members.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.host.cmp(&b.host)));
     }
     groups
 }
@@ -288,22 +327,29 @@ fn render_stack(stack: &str, members: &[&Container], options: Options) -> String
     });
     doc.blank();
 
+    let with_host = members.iter().any(|c| c.host.is_some());
     let rows: Vec<Vec<String>> = members
         .iter()
         .map(|c| {
-            vec![
-                code(&c.name),
+            let mut row = vec![code(&c.name)];
+            if with_host {
+                row.push(optional_code(c.host.as_deref()));
+            }
+            row.extend([
                 optional_code(c.service.as_deref()),
                 code(&c.image),
                 optional_code(c.version.as_deref()),
                 code(&c.restart_policy),
-            ]
+            ]);
+            row
         })
         .collect();
-    doc.table(
-        &["Container", "Service", "Image", "Version", "Restart policy"],
-        &rows,
-    );
+    let mut headers = vec!["Container"];
+    if with_host {
+        headers.push("Server");
+    }
+    headers.extend(["Service", "Image", "Version", "Restart policy"]);
+    doc.table(&headers, &rows);
 
     for container in members {
         render_container(&mut doc, container);
@@ -313,8 +359,11 @@ fn render_stack(stack: &str, members: &[&Container], options: Options) -> String
 }
 
 fn render_container(doc: &mut Doc, c: &Container) {
-    doc.line(format!("## {}", code(&c.name)));
+    doc.line(format!("## {}", code(&c.display_name())));
     doc.blank();
+    if let Some(host) = &c.host {
+        doc.line(format!("- **Server:** {}", code(host)));
+    }
     doc.line(format!(
         "- **Image:** {} (id {})",
         code(&c.image),
@@ -447,6 +496,7 @@ mod tests {
     fn container(name: &str, project: Option<&str>) -> Container {
         Container {
             name: name.into(),
+            host: None,
             image: "nginx:1.27".into(),
             image_id: "sha256:0123456789abcdef".into(),
             version: Some("1.27.0".into()),
