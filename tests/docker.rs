@@ -36,7 +36,11 @@ fn a_trailing_slash_in_the_url_is_tolerated() {
 #[test]
 fn a_container_removed_between_listing_and_inspection_is_skipped() {
     let mock = mock_with_all_fixtures();
-    mock.state.lock().unwrap().ghosts.push("deadbeef".into());
+    mock.state
+        .lock()
+        .unwrap()
+        .ghosts
+        .push("deadbeefdeadbeef".into());
     let containers = Docker::new(&mock.url).containers().unwrap();
     assert_eq!(containers.len(), 4);
 }
@@ -129,4 +133,33 @@ fn redirects_are_not_followed() {
     mock.state.lock().unwrap().redirect_list = true;
     // Following the redirect would succeed with an empty list.
     assert!(Docker::new(&mock.url).containers().is_err());
+}
+
+#[test]
+fn a_container_id_that_is_not_hexadecimal_is_refused_before_any_request_uses_it() {
+    let mock = MockDocker::start();
+    mock.state
+        .lock()
+        .unwrap()
+        .ghosts
+        .push("../../secret".into());
+    let error = Docker::new(&mock.url).containers().unwrap_err();
+    assert!(
+        format!("{error:#}").contains("not hexadecimal"),
+        "{error:#}"
+    );
+    let requests = mock.state.lock().unwrap().requests.clone();
+    assert!(
+        requests.iter().all(|r| !r.contains("secret")),
+        "{requests:?}"
+    );
+}
+
+#[test]
+fn an_endless_event_line_is_cut_off_instead_of_filling_memory() {
+    let mock = MockDocker::start();
+    mock.push_raw_event(&"x".repeat(200_000));
+    let mut events = Docker::new(&mock.url).events().unwrap();
+    let error = events.next().unwrap().unwrap_err();
+    assert!(format!("{error:#}").contains("longer than"), "{error:#}");
 }

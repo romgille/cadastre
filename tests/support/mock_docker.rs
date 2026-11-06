@@ -85,6 +85,11 @@ impl MockDocker {
         self.state.lock().unwrap().events.push(line);
     }
 
+    /// Queues an event line as is, without building JSON around it.
+    pub fn push_raw_event(&self, line: &str) {
+        self.state.lock().unwrap().events.push(line.to_string());
+    }
+
     pub fn event_connections(&self) -> usize {
         self.state.lock().unwrap().event_connections
     }
