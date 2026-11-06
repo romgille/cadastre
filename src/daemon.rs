@@ -179,7 +179,10 @@ fn spawn_event_listener(
                     }
                     log::warn(format!("event stream{label} closed, reconnecting"));
                 }
-                Err(error) => log::warn(format!("cannot open the event stream{label}: {error:#}")),
+                Err(error) => {
+                    first_connection = false;
+                    log::warn(format!("cannot open the event stream{label}: {error:#}"));
+                }
             }
             thread::sleep(reconnect);
         }

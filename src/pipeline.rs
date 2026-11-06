@@ -34,11 +34,49 @@ pub fn run_once(
     now: u64,
     accept_shrink: bool,
 ) -> Result<Outcome> {
+    let multi = dockers.len() > 1;
+    if multi {
+        let mut seen = std::collections::HashSet::new();
+        for docker in dockers {
+            let Some(name) = docker.host() else {
+                bail!("several Docker endpoints require every endpoint to have a host name");
+            };
+            if !seen.insert(name) {
+                bail!("duplicate Docker host name `{name}`");
+            }
+        }
+    }
+    let previous = if multi {
+        Snapshot::load(&config.state_dir)?
+    } else {
+        None
+    };
+    let percent = config.shrink_guard_percent as usize;
+
     let mut containers = Vec::new();
     let mut hosts = Vec::new();
     let mut failed = Vec::new();
     for docker in dockers {
-        match docker.containers() {
+        let result = docker.containers().and_then(|found| {
+            if let (true, false, Some(previous), Some(name)) =
+                (multi, accept_shrink, &previous, docker.host())
+            {
+                let before = previous
+                    .containers
+                    .iter()
+                    .filter(|c| c.host.as_deref() == Some(name))
+                    .count();
+                if percent != 0 && before != 0 && found.len() * 100 < before * percent {
+                    bail!(
+                        "Docker reports {} container(s), down from {before} (the guard allows a \
+                         drop to {percent}%); run `cadastre once --accept-shrink` if the drop is real",
+                        found.len()
+                    );
+                }
+            }
+            Ok(found)
+        });
+        match result {
             Ok(found) => {
                 containers.extend(found);
                 if let Some(name) = docker.host() {
@@ -64,7 +102,20 @@ pub fn run_once(
     }
 
     if !failed.is_empty() {
-        let previous = Snapshot::load(&config.state_dir)?;
+        if previous
+            .as_ref()
+            .is_some_and(|p| p.containers.iter().any(|c| c.host.is_none()))
+        {
+            let messages: Vec<String> = failed
+                .iter()
+                .map(|(docker, error)| format!("{}: {error:#}", docker.host().unwrap_or("docker")))
+                .collect();
+            bail!(
+                "cannot attribute the previous containers to a Docker host while some endpoints \
+                 are unavailable, keeping the current publication: {}",
+                messages.join("; ")
+            );
+        }
         for (docker, error) in failed {
             let host = docker.host();
             log::warn(format!(

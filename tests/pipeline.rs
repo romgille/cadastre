@@ -297,3 +297,45 @@ fn containers_from_several_endpoints_are_listed_together_and_an_outage_keeps_the
         "{error:#}"
     );
 }
+
+#[test]
+fn several_endpoints_need_distinct_host_names() {
+    use cadastre::docker::Docker;
+    use cadastre::pipeline::run_once;
+    use support::mock_docker::MockDocker;
+
+    let env = Env::new();
+    let mock = MockDocker::with_containers(&[]);
+    let anonymous = [Docker::new(&mock.url), Docker::new(&mock.url)];
+    assert!(run_once(&env.config, &anonymous, 1, false).is_err());
+    let twins = [
+        Docker::named(&mock.url, Some("nas")),
+        Docker::named(&mock.url, Some("nas")),
+    ];
+    assert!(run_once(&env.config, &twins, 1, false).is_err());
+}
+
+#[test]
+fn one_endpoint_that_loses_its_containers_keeps_its_previous_data() {
+    use cadastre::docker::Docker;
+    use cadastre::pipeline::run_once;
+    use support::mock_docker::MockDocker;
+
+    let env = Env::new();
+    let documents: Vec<_> = fixtures().into_iter().map(|(_, d)| d).collect();
+    let (first, second) = documents.split_at(2);
+    let nas = MockDocker::with_containers(first);
+    let vps = MockDocker::with_containers(second);
+    let dockers = [
+        Docker::named(&nas.url, Some("nas")),
+        Docker::named(&vps.url, Some("vps")),
+    ];
+    run_once(&env.config, &dockers, 1, false).unwrap();
+    for document in second {
+        vps.remove(document["Id"].as_str().unwrap());
+    }
+    let outcome = run_once(&env.config, &dockers, 2, false).unwrap();
+    assert_eq!(outcome.containers, 4);
+    let index = env.out("index.md");
+    assert!(index.contains("| `vps` | 2 | unreachable"), "{index}");
+}
