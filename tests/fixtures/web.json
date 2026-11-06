@@ -1,0 +1,49 @@
+{
+  "Id": "3f8c1a2b9d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5061728394a5b6c7d8e",
+  "Name": "/shop-web-1",
+  "Image": "sha256:aaaaaaaaaaaa1111111111112222222222223333333333334444444444445555",
+  "Config": {
+    "Hostname": "LEAK-hostname",
+    "User": "LEAK-user",
+    "Image": "ghcr.io/example/web:2.4.1",
+    "Env": [
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "APP_ENV=production",
+      "DATABASE_URL=postgres://shop:LEAK-db-password@db:5432/shop",
+      "SECRET_KEY_BASE=LEAK-secret-key-base"
+    ],
+    "Cmd": ["serve", "--api-token=LEAK-cmd-token"],
+    "Entrypoint": ["/entrypoint.sh", "--license=LEAK-entrypoint-license"],
+    "Healthcheck": {
+      "Test": ["CMD-SHELL", "curl -fs -H 'Authorization: Bearer LEAK-health-token' http://localhost:8080/health"]
+    },
+    "ExposedPorts": {"8080/tcp": {}, "9100/tcp": {}},
+    "Labels": {
+      "com.docker.compose.project": "shop",
+      "com.docker.compose.service": "web",
+      "org.opencontainers.image.version": "2.4.1",
+      "org.opencontainers.image.source": "https://github.com/example/web",
+      "traefik.enable": "true",
+      "traefik.http.routers.shop.rule": "Host(`shop.example.com`)",
+      "traefik.http.routers.shop.entrypoints": "websecure",
+      "traefik.http.middlewares.admin-auth.basicauth.users": "admin:LEAK-basicauth-hash",
+      "com.example.api-key": "LEAK-label-api-key"
+    }
+  },
+  "HostConfig": {
+    "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+    "NetworkMode": "shop_default",
+    "PortBindings": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]},
+    "Binds": ["/srv/shop/uploads:/app/uploads:rw"]
+  },
+  "Mounts": [
+    {"Type": "bind", "Source": "/srv/shop/uploads", "Destination": "/app/uploads", "Mode": "rw", "RW": true, "Propagation": "rprivate"},
+    {"Type": "volume", "Name": "shop_cache", "Source": "/var/lib/docker/volumes/shop_cache/_data", "Destination": "/cache", "Driver": "local", "Mode": "z", "RW": true}
+  ],
+  "NetworkSettings": {
+    "Networks": {
+      "shop_default": {"IPAddress": "172.20.0.3"},
+      "proxy": {"IPAddress": "172.21.0.5"}
+    }
+  }
+}
