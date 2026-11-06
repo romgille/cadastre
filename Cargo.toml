@@ -1,0 +1,22 @@
+[package]
+name = "cadastre"
+version = "0.1.0"
+edition = "2021"
+description = "Keeps a folder of Markdown up to date with what your Docker containers are running."
+license = "AGPL-3.0-or-later"
+readme = "README.md"
+keywords = ["docker", "documentation", "homelab", "obsidian"]
+categories = ["command-line-utilities"]
+publish = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+# A panic in a background thread is a silent failure. Library code returns
+# errors instead; tests may unwrap (see clippy.toml).
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
