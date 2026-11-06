@@ -1,0 +1,44 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **If a secret may have reached the output, stop and use the private
+        security report instead of this form.**
+
+        Remove tokens, passwords and private hostnames from anything you paste.
+  - type: input
+    id: version
+    attributes:
+      label: cadastre version
+      description: Output of `cadastre --version`, or the image tag.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: A minimal Compose file or a sanitized `docker inspect` excerpt helps most.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The container logs around the problem.
+      render: text
+  - type: dropdown
+    id: visibility
+    attributes:
+      label: Did you notice it because something alerted, or by chance?
+      description: This tells us whether a failure was loud enough.
+      options:
+        - Something alerted (health check, metric, log)
+        - By chance
+        - Not sure
