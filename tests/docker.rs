@@ -122,3 +122,11 @@ fn the_event_request_asks_only_for_container_and_network_events() {
         "{request}"
     );
 }
+
+#[test]
+fn redirects_are_not_followed() {
+    let mock = mock_with_all_fixtures();
+    mock.state.lock().unwrap().redirect_list = true;
+    // Following the redirect would succeed with an empty list.
+    assert!(Docker::new(&mock.url).containers().is_err());
+}

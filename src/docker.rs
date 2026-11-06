@@ -31,6 +31,14 @@ impl Docker {
         let agent = |timeout: Option<Duration>| {
             ureq::Agent::config_builder()
                 .http_status_as_error(false)
+                // A socket proxy never redirects. Following one would let a
+                // misconfigured or hostile endpoint send these requests, and
+                // the data in their answers, somewhere else.
+                .max_redirects(0)
+                // Proxy settings in the environment are meant for the
+                // internet, not for a private socket proxy: honouring them
+                // would route the container list through a third party.
+                .proxy(None)
                 .timeout_connect(Some(CONNECT_TIMEOUT))
                 .timeout_global(timeout)
                 .build()
