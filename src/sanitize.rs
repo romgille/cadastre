@@ -292,12 +292,23 @@ fn text<'a>(value: &'a Value, pointer: &str) -> Option<&'a str> {
     value.pointer(pointer)?.as_str()
 }
 
+/// Characters that change how text is displayed without being visible:
+/// control characters, zero-width characters, line and paragraph separators,
+/// and the bidirectional overrides that make `fdp.exe` read as `exe.pdf`.
+fn is_invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
+        )
+}
+
 /// Replaces control characters (line breaks included), trims and caps the
 /// length of a text coming from Docker.
 fn clean(raw: &str) -> String {
     let flattened: String = raw
         .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| if is_invisible(c) { ' ' } else { c })
         .collect();
     let trimmed = flattened.trim();
     if trimmed.chars().count() > MAX_TEXT_CHARS {
@@ -342,6 +353,18 @@ mod tests {
     fn a_parenthesis_inside_a_quoted_argument_is_not_a_matcher() {
         let key = "traefik.http.routers.app.rule";
         assert!(label_allowed(key, "Host(`a.example.com`) && Path(`/a(b)`)"));
+    }
+
+    #[test]
+    fn invisible_and_direction_overriding_characters_become_spaces() {
+        assert_eq!(
+            clean("a\u{202E}b\u{200B}c\u{2028}d\u{FEFF}e\u{2066}f"),
+            "a b c d e f"
+        );
+        assert_eq!(
+            clean("caf\u{e9} \u{4e2d}\u{6587}"),
+            "caf\u{e9} \u{4e2d}\u{6587}"
+        );
     }
 
     #[test]
