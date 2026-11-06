@@ -299,6 +299,14 @@ fn containers_from_several_endpoints_are_listed_together_and_an_outage_keeps_the
 }
 
 #[test]
+fn run_once_rejects_an_empty_endpoint_list() {
+    use cadastre::pipeline::run_once;
+
+    let env = Env::new();
+    assert!(run_once(&env.config, &[], 1, true).is_err());
+}
+
+#[test]
 fn several_endpoints_need_distinct_host_names() {
     use cadastre::docker::Docker;
     use cadastre::pipeline::run_once;

@@ -34,6 +34,9 @@ pub fn run_once(
     now: u64,
     accept_shrink: bool,
 ) -> Result<Outcome> {
+    if dockers.is_empty() {
+        bail!("no Docker endpoint to read");
+    }
     let multi = dockers.len() > 1;
     if multi {
         let mut seen = std::collections::HashSet::new();

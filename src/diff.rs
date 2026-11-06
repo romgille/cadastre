@@ -131,6 +131,39 @@ mod tests {
         }
     }
 
+    fn on(name: &str, host: &str) -> Container {
+        Container {
+            host: Some(host.into()),
+            ..container(name)
+        }
+    }
+
+    #[test]
+    fn same_name_on_two_hosts_is_tracked_separately() {
+        let state = [on("web", "a"), on("web", "b")];
+        assert!(diff(&state, &state).is_empty());
+
+        let mut changed = on("web", "b");
+        changed.image = "nginx:2".into();
+        let changes = diff(&state, &[on("web", "a"), changed]);
+        assert_eq!(
+            changes,
+            [Change::ImageChanged {
+                name: "web@b".into(),
+                from: "nginx:1 (aaaaaaaaaaaa)".into(),
+                to: "nginx:2 (aaaaaaaaaaaa)".into(),
+            }]
+        );
+
+        let changes = diff(&state, &[on("web", "a")]);
+        assert_eq!(
+            changes,
+            [Change::Removed {
+                name: "web@b".into()
+            }]
+        );
+    }
+
     #[test]
     fn identical_states_have_no_changes() {
         let state = [container("a"), container("b")];
