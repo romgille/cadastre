@@ -68,19 +68,24 @@ fn run() -> Result<()> {
     }
     log::info(format!(
         "cadastre {VERSION} starting: docker={} out={} reconcile={}s debounce={}s",
-        config.docker_url,
+        config
+            .docker_endpoints
+            .iter()
+            .map(|endpoint| endpoint.url.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
         config.out_dir.display(),
         config.reconcile.as_secs(),
         config.debounce.as_secs()
     ));
-    let docker = Docker::new(&config.docker_url);
-    daemon::run(&config, &docker, &Timing::default(), &shutdown)
+    let dockers = Docker::from_endpoints(&config.docker_endpoints);
+    daemon::run(&config, &dockers, &Timing::default(), &shutdown)
 }
 
 fn once(accept_shrink: bool) -> Result<()> {
     let config = Config::from_env()?;
-    let docker = Docker::new(&config.docker_url);
-    let outcome = run_once(&config, &docker, unix_now(), accept_shrink)?;
+    let dockers = Docker::from_endpoints(&config.docker_endpoints);
+    let outcome = run_once(&config, &dockers, unix_now(), accept_shrink)?;
     println!(
         "{} container(s): {} page(s) written, {} removed{}",
         outcome.containers,

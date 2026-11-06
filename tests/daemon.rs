@@ -56,7 +56,7 @@ impl Running {
         let handle = {
             let config = config.clone();
             let shutdown = Arc::clone(&shutdown);
-            let docker = Docker::new(&mock.url);
+            let docker = [Docker::new(&mock.url)];
             let timing = Timing {
                 retry: Duration::from_millis(200),
                 reconnect: Duration::from_millis(100),

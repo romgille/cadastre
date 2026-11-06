@@ -8,9 +8,10 @@ use anyhow::{bail, Context, Result};
 use crate::changelog;
 use crate::config::Config;
 use crate::docker::Docker;
+use crate::log;
 use crate::model::Container;
 use crate::output::{OutDir, Report};
-use crate::render::{render, Options};
+use crate::render::{render_with_hosts, HostStatus, Options};
 use crate::snapshot::Snapshot;
 use crate::timefmt::rfc3339_utc;
 
@@ -22,15 +23,73 @@ pub struct Outcome {
     pub changelog_entry: bool,
 }
 
-/// Reads the containers from Docker and publishes them.
+/// Reads the containers from every Docker endpoint and publishes them.
+///
+/// An endpoint that cannot be read does not stop the others: its containers
+/// keep their entries from the previous snapshot and the index marks the
+/// endpoint as unreachable. The run fails only when no endpoint answers.
 pub fn run_once(
     config: &Config,
-    docker: &Docker,
+    dockers: &[Docker],
     now: u64,
     accept_shrink: bool,
 ) -> Result<Outcome> {
-    let containers = docker.containers()?;
-    publish(config, &containers, now, accept_shrink)
+    let mut containers = Vec::new();
+    let mut hosts = Vec::new();
+    let mut failed = Vec::new();
+    for docker in dockers {
+        match docker.containers() {
+            Ok(found) => {
+                containers.extend(found);
+                if let Some(name) = docker.host() {
+                    hosts.push(HostStatus {
+                        name: name.to_string(),
+                        reachable: true,
+                    });
+                }
+            }
+            Err(error) => failed.push((docker, error)),
+        }
+    }
+
+    if !failed.is_empty() && failed.len() == dockers.len() {
+        if failed.len() == 1 {
+            return Err(failed.remove(0).1);
+        }
+        let messages: Vec<String> = failed
+            .iter()
+            .map(|(docker, error)| format!("{}: {error:#}", docker.host().unwrap_or("docker")))
+            .collect();
+        bail!("no Docker endpoint could be read: {}", messages.join("; "));
+    }
+
+    if !failed.is_empty() {
+        let previous = Snapshot::load(&config.state_dir)?;
+        for (docker, error) in failed {
+            let host = docker.host();
+            log::warn(format!(
+                "cannot read {}, keeping its last known containers: {error:#}",
+                host.unwrap_or("the Docker endpoint")
+            ));
+            if let Some(previous) = &previous {
+                containers.extend(
+                    previous
+                        .containers
+                        .iter()
+                        .filter(|c| c.host.as_deref() == host)
+                        .cloned(),
+                );
+            }
+            if let Some(name) = host {
+                hosts.push(HostStatus {
+                    name: name.to_string(),
+                    reachable: false,
+                });
+            }
+        }
+    }
+    hosts.sort_by(|a, b| a.name.cmp(&b.name));
+    publish_with_hosts(config, &containers, &hosts, now, accept_shrink)
 }
 
 /// Publishes `containers`: pages, then changelog, then snapshot.
@@ -45,6 +104,17 @@ pub fn publish(
     now: u64,
     accept_shrink: bool,
 ) -> Result<Outcome> {
+    publish_with_hosts(config, containers, &[], now, accept_shrink)
+}
+
+/// Like [`publish`], and lists `hosts` with their status in the index.
+pub fn publish_with_hosts(
+    config: &Config,
+    containers: &[Container],
+    hosts: &[HostStatus],
+    now: u64,
+    accept_shrink: bool,
+) -> Result<Outcome> {
     let previous = Snapshot::load(&config.state_dir)?;
     if !accept_shrink {
         check_shrink(config, previous.as_ref(), containers.len())?;
@@ -53,8 +123,9 @@ pub fn publish(
 
     let changelog_text = changelog_update(&out, previous.as_ref(), containers, now)?;
 
-    let pages = render(
+    let pages = render_with_hosts(
         containers,
+        hosts,
         &Options {
             obsidian: config.obsidian,
         },

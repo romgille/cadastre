@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 
 use crate::model::Container;
 
-/// One change to one container. Containers are identified by name: a
+/// One change to one container. Containers are identified by name (and by
+/// endpoint, when several are configured): a
 /// container recreated under the same name is an update, not a removal and an
 /// addition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,23 +43,21 @@ impl Change {
 
 /// Changes needed to go from `old` to `new`, sorted by container name.
 pub fn diff(old: &[Container], new: &[Container]) -> Vec<Change> {
-    let old: BTreeMap<&str, &Container> = old.iter().map(|c| (c.name.as_str(), c)).collect();
-    let new: BTreeMap<&str, &Container> = new.iter().map(|c| (c.name.as_str(), c)).collect();
+    let old: BTreeMap<String, &Container> = old.iter().map(|c| (c.display_name(), c)).collect();
+    let new: BTreeMap<String, &Container> = new.iter().map(|c| (c.display_name(), c)).collect();
 
     let mut changes = Vec::new();
     for (name, current) in &new {
         match old.get(name) {
             None => changes.push(Change::Added {
-                name: (*name).into(),
+                name: name.clone(),
                 image: current.image.clone(),
             }),
             Some(previous) => changes.extend(compare(previous, current)),
         }
     }
     for name in old.keys().filter(|name| !new.contains_key(*name)) {
-        changes.push(Change::Removed {
-            name: (*name).into(),
-        });
+        changes.push(Change::Removed { name: name.clone() });
     }
     changes.sort_by(|a, b| a.name().cmp(b.name()));
     changes
@@ -68,7 +67,7 @@ fn compare(old: &Container, new: &Container) -> Vec<Change> {
     let mut changes = Vec::new();
     if old.image != new.image || old.image_id != new.image_id || old.version != new.version {
         changes.push(Change::ImageChanged {
-            name: new.name.clone(),
+            name: new.display_name(),
             from: describe_image(old),
             to: describe_image(new),
         });
@@ -93,7 +92,7 @@ fn compare(old: &Container, new: &Container) -> Vec<Change> {
         .collect();
     if !fields.is_empty() {
         changes.push(Change::Reconfigured {
-            name: new.name.clone(),
+            name: new.display_name(),
             fields,
         });
     }
@@ -116,6 +115,7 @@ mod tests {
     fn container(name: &str) -> Container {
         Container {
             name: name.into(),
+            host: None,
             image: "nginx:1".into(),
             image_id: "sha256:aaaaaaaaaaaaaaaa".into(),
             version: None,

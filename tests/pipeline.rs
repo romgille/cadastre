@@ -229,7 +229,7 @@ fn a_run_against_the_mock_docker_api_documents_what_it_serves() {
     let env = Env::new();
     let documents: Vec<_> = fixtures().into_iter().map(|(_, d)| d).collect();
     let mock = MockDocker::with_containers(&documents);
-    let outcome = run_once(&env.config, &Docker::new(&mock.url), 1, false).unwrap();
+    let outcome = run_once(&env.config, &[Docker::new(&mock.url)], 1, false).unwrap();
     assert_eq!(outcome.containers, 4);
     assert!(env.out("docker/shop.md").contains("shop-web-1"));
 }
@@ -244,10 +244,56 @@ fn a_proxy_that_suddenly_answers_with_nothing_does_not_wipe_the_documentation() 
     let documents: Vec<_> = fixtures().into_iter().map(|(_, d)| d).collect();
     let mock = MockDocker::with_containers(&documents);
     let docker = Docker::new(&mock.url);
-    run_once(&env.config, &docker, 1, false).unwrap();
+    run_once(&env.config, std::slice::from_ref(&docker), 1, false).unwrap();
     for document in &documents {
         mock.remove(document["Id"].as_str().unwrap());
     }
-    assert!(run_once(&env.config, &docker, 2, false).is_err());
+    assert!(run_once(&env.config, std::slice::from_ref(&docker), 2, false).is_err());
     assert!(env.exists("docker/shop.md"));
+}
+
+#[test]
+fn containers_from_several_endpoints_are_listed_together_and_an_outage_keeps_the_rest() {
+    use cadastre::docker::Docker;
+    use cadastre::pipeline::run_once;
+    use support::mock_docker::MockDocker;
+
+    let env = Env::new();
+    let documents: Vec<_> = fixtures().into_iter().map(|(_, d)| d).collect();
+    let (first, second) = documents.split_at(2);
+    let nas = MockDocker::with_containers(first);
+    let vps = MockDocker::with_containers(second);
+    let dockers = [
+        Docker::named(&nas.url, Some("nas")),
+        Docker::named(&vps.url, Some("vps")),
+    ];
+
+    let outcome = run_once(&env.config, &dockers, 1, false).unwrap();
+    assert_eq!(outcome.containers, 4);
+    let index = env.out("index.md");
+    assert!(index.contains("| `nas` | 2 | reachable |"), "{index}");
+    assert!(index.contains("| `vps` | 2 | reachable |"), "{index}");
+    let pages: String = ["index.md", "docker/shop.md", "docker/_standalone.md"]
+        .iter()
+        .filter(|path| env.exists(path))
+        .map(|path| env.out(path))
+        .collect();
+    assert!(pages.contains("**Server:** `nas`") && pages.contains("**Server:** `vps`"));
+
+    vps.set_status(Some(500));
+    let outcome = run_once(&env.config, &dockers, 2, false).unwrap();
+    assert_eq!(outcome.containers, 4, "the unreachable host keeps its data");
+    let index = env.out("index.md");
+    assert!(index.contains("| `nas` | 2 | reachable |"), "{index}");
+    assert!(
+        index.contains("| `vps` | 2 | unreachable (last known data) |"),
+        "{index}"
+    );
+
+    nas.set_status(Some(500));
+    let error = run_once(&env.config, &dockers, 3, false).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("no Docker endpoint"),
+        "{error:#}"
+    );
 }

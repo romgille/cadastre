@@ -10,6 +10,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 
+use crate::config::Endpoint;
 use crate::model::Container;
 use crate::sanitize::container_from_inspect;
 
@@ -27,12 +28,36 @@ const EVENT_FILTERS: &str = "%7B%22type%22%3A%5B%22container%22%2C%22network%22%
 #[derive(Debug, Clone)]
 pub struct Docker {
     base: String,
+    host: Option<String>,
     calls: ureq::Agent,
     stream: ureq::Agent,
 }
 
 impl Docker {
     pub fn new(base_url: &str) -> Self {
+        Self::build(base_url, None)
+    }
+
+    /// A client whose containers are labelled with `host`, so that they can
+    /// be told apart from those of other endpoints.
+    pub fn named(base_url: &str, host: Option<&str>) -> Self {
+        Self::build(base_url, host.map(String::from))
+    }
+
+    /// One client per configured endpoint.
+    pub fn from_endpoints(endpoints: &[Endpoint]) -> Vec<Self> {
+        endpoints
+            .iter()
+            .map(|endpoint| Self::named(&endpoint.url, endpoint.name.as_deref()))
+            .collect()
+    }
+
+    /// The friendly name of the endpoint, if it has one.
+    pub fn host(&self) -> Option<&str> {
+        self.host.as_deref()
+    }
+
+    fn build(base_url: &str, host: Option<String>) -> Self {
         let agent = |timeout: Option<Duration>| {
             ureq::Agent::config_builder()
                 .http_status_as_error(false)
@@ -51,6 +76,7 @@ impl Docker {
         };
         Self {
             base: base_url.trim_end_matches('/').to_string(),
+            host,
             calls: agent(Some(CALL_TIMEOUT)),
             // The event stream is idle for as long as nothing happens, so it
             // has no deadline. A dead connection is caught by the periodic
@@ -70,8 +96,9 @@ impl Docker {
             let Some(document) = self.inspect(&id)? else {
                 continue;
             };
-            let container = container_from_inspect(&document)
+            let mut container = container_from_inspect(&document)
                 .with_context(|| format!("cannot document container {}", short(&id)))?;
+            container.host.clone_from(&self.host);
             containers.push(container);
         }
         Ok(containers)

@@ -27,7 +27,7 @@ pub struct Snapshot {
 
 impl Snapshot {
     pub fn new(mut containers: Vec<Container>) -> Self {
-        containers.sort_by(|a, b| a.name.cmp(&b.name));
+        containers.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.host.cmp(&b.host)));
         Self {
             format: FORMAT,
             containers,
@@ -76,6 +76,7 @@ mod tests {
     fn container(name: &str) -> Container {
         Container {
             name: name.into(),
+            host: None,
             image: "nginx:1".into(),
             image_id: "sha256:abc".into(),
             version: None,
