@@ -5,8 +5,10 @@
 //! `main.rs` only wires them together.
 
 pub mod config;
+pub mod fsutil;
 pub mod log;
 pub mod model;
+pub mod output;
 pub mod render;
 pub mod sanitize;
 
