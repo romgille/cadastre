@@ -1,0 +1,52 @@
+# Example deployment. Copy it, then adjust the three things marked CHANGE.
+#
+# cadastre never touches the Docker socket. It talks to a read-only proxy that
+# only answers GET requests for containers and events, over a network that has
+# no route to the internet.
+
+services:
+  socket-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.5.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: "1" # container list and inspection
+      EVENTS: "1" # the event stream (on by default, stated for clarity)
+      POST: "0" # read-only: refuse anything but GET and HEAD
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [socket]
+    security_opt: [no-new-privileges:true]
+
+  cadastre:
+    image: ghcr.io/romgille/cadastre:latest # pin a version in production
+    restart: unless-stopped
+    depends_on: [socket-proxy]
+    # CHANGE: the uid:gid that owns the output folder (the one your sync tool
+    # also uses), so that the files it writes belong to the right user.
+    user: "1000:1000"
+    environment:
+      CADASTRE_DOCKER_URL: http://socket-proxy:2375
+      # Obsidian front matter and wikilinks. Remove for plain Markdown.
+      CADASTRE_OBSIDIAN: "true"
+      # Optional: a folder read by node_exporter's textfile collector.
+      # CADASTRE_METRICS_DIR: /metrics
+    volumes:
+      # CHANGE: the folder inside your vault that cadastre owns.
+      - ./vault/Infrastructure:/out
+      - cadastre-state:/state
+      # - /var/lib/node-exporter/textfile:/metrics
+    networks: [socket]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
+    memswap_limit: 64m
+
+networks:
+  socket:
+    # No route to the outside: the proxy and cadastre can only reach each other.
+    internal: true
+
+volumes:
+  cadastre-state:
