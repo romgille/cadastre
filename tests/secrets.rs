@@ -84,7 +84,7 @@ fn rendered_pages_still_carry_the_useful_facts() {
     // Guards against a pass caused by empty output.
     let pages = render(&all_containers(), &Options::default());
     assert!(page(&pages, "index.md").contains("4 containers in 2 stacks."));
-    let shop = page(&pages, "stacks/shop.md");
+    let shop = page(&pages, "docker/shop.md");
     assert!(shop.contains("`ghcr.io/example/web:2.4.1`"), "{shop}");
     assert!(shop.contains("`SECRET_KEY_BASE`"), "{shop}");
     assert!(shop.contains("`traefik.http.routers.shop.rule`"), "{shop}");

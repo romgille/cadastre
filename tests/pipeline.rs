@@ -57,7 +57,7 @@ fn the_first_run_writes_pages_a_changelog_and_a_snapshot() {
     assert_eq!(outcome.containers, 4);
     assert!(outcome.changelog_entry);
     assert!(env.exists("index.md"));
-    assert!(env.exists("stacks/shop.md"));
+    assert!(env.exists("docker/shop.md"));
     assert!(env.config.state_dir.join("snapshot.json").exists());
     let changelog = env.out("changelog.md");
     assert!(
@@ -117,8 +117,8 @@ fn a_stack_that_disappears_loses_its_page() {
     let mut standalone_only = all();
     standalone_only.retain(|c| c.project.is_none());
     publish(&env.config, &standalone_only, 2, false).unwrap();
-    assert!(!env.exists("stacks/shop.md"));
-    assert!(env.exists("stacks/_standalone.md") || env.exists("stacks/standalone.md"));
+    assert!(!env.exists("docker/shop.md"));
+    assert!(env.exists("docker/_standalone.md") || env.exists("docker/standalone.md"));
 }
 
 #[test]
@@ -231,7 +231,7 @@ fn a_run_against_the_mock_docker_api_documents_what_it_serves() {
     let mock = MockDocker::with_containers(&documents);
     let outcome = run_once(&env.config, &Docker::new(&mock.url), 1, false).unwrap();
     assert_eq!(outcome.containers, 4);
-    assert!(env.out("stacks/shop.md").contains("shop-web-1"));
+    assert!(env.out("docker/shop.md").contains("shop-web-1"));
 }
 
 #[test]
@@ -249,5 +249,5 @@ fn a_proxy_that_suddenly_answers_with_nothing_does_not_wipe_the_documentation() 
         mock.remove(document["Id"].as_str().unwrap());
     }
     assert!(run_once(&env.config, &docker, 2, false).is_err());
-    assert!(env.exists("stacks/shop.md"));
+    assert!(env.exists("docker/shop.md"));
 }

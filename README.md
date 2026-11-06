@@ -30,8 +30,8 @@ An overview page, with the things worth a second look:
 
 | Stack | Containers |
 |---|---|
-| [`shop`](stacks/shop.md) | 2 |
-| [`standalone`](stacks/_standalone.md) | 2 |
+| [`shop`](docker/shop.md) | 2 |
+| [`standalone`](docker/_standalone.md) | 2 |
 
 ## Warnings
 
