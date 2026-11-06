@@ -70,7 +70,22 @@ fn build(inspect: &Value, name: &str) -> Result<Container> {
 /// descriptive are allowed, and a few values are dropped even under an
 /// allowed key.
 pub fn label_allowed(key: &str, value: &str) -> bool {
+    // Image metadata such as `source` is a URL, and CI systems sometimes
+    // build it with a token in it. A credential is never documentation.
+    if has_url_credentials(value) {
+        return false;
+    }
     key.starts_with("org.opencontainers.image.") || traefik_routing_label(key, value)
+}
+
+/// Whether the text contains a URL with user information
+/// (`scheme://user:password@host`).
+fn has_url_credentials(value: &str) -> bool {
+    value.split("://").skip(1).any(|rest| {
+        rest.split(|c: char| matches!(c, '/' | '?' | '#') || c.is_whitespace())
+            .next()
+            .is_some_and(|authority| authority.contains('@'))
+    })
 }
 
 /// Traefik labels that describe where a service is reachable.
@@ -85,13 +100,53 @@ fn traefik_routing_label(key: &str, value: &str) -> bool {
     }
     if let Some(rest) = key.strip_prefix("traefik.http.routers.") {
         if rest.ends_with(".rule") {
-            return !value.to_ascii_lowercase().contains("header");
+            return rule_uses_only_safe_matchers(value);
         }
         return [".entrypoints", ".service", ".tls.certresolver"]
             .iter()
             .any(|suffix| rest.ends_with(suffix));
     }
     key.starts_with("traefik.http.services.") && key.ends_with(".loadbalancer.server.port")
+}
+
+/// Matchers whose arguments describe where a service lives. The others
+/// (`Header`, `HeadersRegexp`, `Query`, `QueryRegexp`, `Cookie`...) match on
+/// request content, which is where shared secrets end up.
+const SAFE_MATCHERS: [&str; 6] = [
+    "host",
+    "hostregexp",
+    "path",
+    "pathprefix",
+    "pathregexp",
+    "method",
+];
+
+/// Whether every matcher used in a Traefik rule is a safe one. A rule with
+/// an unknown matcher is dropped as a whole: allowlist, not blocklist.
+fn rule_uses_only_safe_matchers(rule: &str) -> bool {
+    let mut name = String::new();
+    let mut quote: Option<char> = None;
+    for c in rule.chars() {
+        if let Some(open) = quote {
+            // Arguments are quoted; what is inside is not a matcher name.
+            if c == open {
+                quote = None;
+            }
+        } else if c == '`' || c == '"' {
+            quote = Some(c);
+            name.clear();
+        } else if c == '(' {
+            if !SAFE_MATCHERS.contains(&name.to_ascii_lowercase().as_str()) {
+                return false;
+            }
+            name.clear();
+        } else if c.is_ascii_alphabetic() {
+            name.push(c);
+        } else {
+            name.clear();
+        }
+    }
+    quote.is_none()
 }
 
 fn allowed_labels(labels: Option<&Map<String, Value>>) -> BTreeMap<String, String> {
@@ -237,12 +292,23 @@ fn text<'a>(value: &'a Value, pointer: &str) -> Option<&'a str> {
     value.pointer(pointer)?.as_str()
 }
 
+/// Characters that change how text is displayed without being visible:
+/// control characters, zero-width characters, line and paragraph separators,
+/// and the bidirectional overrides that make `fdp.exe` read as `exe.pdf`.
+fn is_invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
+        )
+}
+
 /// Replaces control characters (line breaks included), trims and caps the
 /// length of a text coming from Docker.
 fn clean(raw: &str) -> String {
     let flattened: String = raw
         .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| if is_invisible(c) { ' ' } else { c })
         .collect();
     let trimmed = flattened.trim();
     if trimmed.chars().count() > MAX_TEXT_CHARS {
@@ -258,6 +324,67 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn rules_are_kept_only_when_every_matcher_is_known_to_be_safe() {
+        let key = "traefik.http.routers.app.rule";
+        for rule in [
+            "Host(`app.example.com`)",
+            "Host(`a.example.com`) && PathPrefix(`/api`)",
+            "host(`a.example.com`) || HostRegexp(`^b\\.example\\.com$`)",
+            "Method(`GET`) && !Path(`/admin`)",
+        ] {
+            assert!(label_allowed(key, rule), "{rule}");
+        }
+        for rule in [
+            "Host(`a.example.com`) && Header(`X-Token`, `LEAK-secret`)",
+            "Host(`a.example.com`) && HeadersRegexp(`X-Token`, `LEAK-.*`)",
+            "Host(`a.example.com`) && Query(`token=LEAK-secret`)",
+            "Host(`a.example.com`) && QueryRegexp(`token`, `LEAK`)",
+            "Host(`a.example.com`) && Cookie(`session`, `LEAK`)",
+            "Host(`a.example.com`) && FutureMatcher(`x`)",
+            "Host(`a.example.com",
+        ] {
+            assert!(!label_allowed(key, rule), "{rule}");
+        }
+    }
+
+    #[test]
+    fn a_parenthesis_inside_a_quoted_argument_is_not_a_matcher() {
+        let key = "traefik.http.routers.app.rule";
+        assert!(label_allowed(key, "Host(`a.example.com`) && Path(`/a(b)`)"));
+    }
+
+    #[test]
+    fn invisible_and_direction_overriding_characters_become_spaces() {
+        assert_eq!(
+            clean("a\u{202E}b\u{200B}c\u{2028}d\u{FEFF}e\u{2066}f"),
+            "a b c d e f"
+        );
+        assert_eq!(
+            clean("caf\u{e9} \u{4e2d}\u{6587}"),
+            "caf\u{e9} \u{4e2d}\u{6587}"
+        );
+    }
+
+    #[test]
+    fn urls_with_credentials_are_dropped_from_allowed_labels() {
+        let key = "org.opencontainers.image.source";
+        assert!(label_allowed(key, "https://github.com/example/web"));
+        assert!(label_allowed(key, "https://github.com/example/web@v1"));
+        assert!(!label_allowed(
+            key,
+            "https://ci:LEAK-token@github.com/example/web"
+        ));
+        assert!(!label_allowed(
+            key,
+            "https://LEAK-token@github.com/example/web"
+        ));
+        assert!(!label_allowed(
+            "org.opencontainers.image.description",
+            "mirror of https://u:LEAK-p@host/x, see docs"
+        ));
+    }
 
     fn sample() -> Value {
         json!({

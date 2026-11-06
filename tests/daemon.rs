@@ -197,14 +197,14 @@ fn a_daemon_that_loses_everything_keeps_the_old_pages_and_reports_failure() {
     let documents: Vec<Value> = fixtures().into_iter().map(|(_, d)| d).collect();
     let daemon = Running::start(&documents, 3600);
     wait_for("the first publication", || {
-        daemon.out("stacks/shop.md").is_some()
+        daemon.out("docker/shop.md").is_some()
     });
     for document in &documents {
         daemon.mock.remove(document["Id"].as_str().unwrap());
     }
     daemon.mock.push_event("container", "destroy");
     wait_for("the guard to trip", || daemon.heartbeat().is_err());
-    assert!(daemon.out("stacks/shop.md").is_some());
+    assert!(daemon.out("docker/shop.md").is_some());
 }
 
 #[test]

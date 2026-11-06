@@ -4,7 +4,7 @@
 //! allows `GET` on containers. It never needs, and never uses, anything that
 //! changes state.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -12,6 +12,11 @@ use serde_json::Value;
 
 use crate::model::Container;
 use crate::sanitize::container_from_inspect;
+
+/// Longest event line accepted. Real events are a few hundred bytes; the cap
+/// keeps an endpoint that never sends a newline from filling the memory of a
+/// container that is limited to a few tens of megabytes.
+const MAX_EVENT_BYTES: u64 = 64 * 1024;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -31,6 +36,14 @@ impl Docker {
         let agent = |timeout: Option<Duration>| {
             ureq::Agent::config_builder()
                 .http_status_as_error(false)
+                // A socket proxy never redirects. Following one would let a
+                // misconfigured or hostile endpoint send these requests, and
+                // the data in their answers, somewhere else.
+                .max_redirects(0)
+                // Proxy settings in the environment are meant for the
+                // internet, not for a private socket proxy: honouring them
+                // would route the container list through a third party.
+                .proxy(None)
                 .timeout_connect(Some(CONNECT_TIMEOUT))
                 .timeout_global(timeout)
                 .build()
@@ -53,6 +66,7 @@ impl Docker {
     pub fn containers(&self) -> Result<Vec<Container>> {
         let mut containers = Vec::new();
         for id in self.container_ids()? {
+            ensure_container_id(&id)?;
             let Some(document) = self.inspect(&id)? else {
                 continue;
             };
@@ -118,6 +132,17 @@ fn read_json(response: &mut ureq::http::Response<ureq::Body>, what: &str) -> Res
     serde_json::from_str(&text).with_context(|| format!("{what} is not valid JSON"))
 }
 
+/// Container IDs are hexadecimal. The ID goes into a request path, so
+/// anything else (a slash, a `?`, `..`) is refused instead of being sent.
+fn ensure_container_id(id: &str) -> Result<()> {
+    let valid = (12..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit());
+    if valid {
+        Ok(())
+    } else {
+        bail!("the daemon listed a container id that is not hexadecimal: {id:.20?}")
+    }
+}
+
 fn short(id: &str) -> &str {
     id.get(..12).unwrap_or(id)
 }
@@ -146,10 +171,15 @@ impl Iterator for Events {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let mut line = String::new();
-            match self.lines.read_line(&mut line) {
+            match (&mut self.lines).take(MAX_EVENT_BYTES).read_line(&mut line) {
                 Ok(0) => return None,
                 Err(error) => return Some(Err(error).context("the event stream broke")),
                 Ok(_) => {}
+            }
+            if !line.ends_with('\n') && line.len() as u64 >= MAX_EVENT_BYTES {
+                return Some(Err(anyhow!(
+                    "an event is longer than {MAX_EVENT_BYTES} bytes; closing the stream"
+                )));
             }
             if line.trim().is_empty() {
                 continue;

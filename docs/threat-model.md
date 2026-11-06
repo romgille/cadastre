@@ -18,8 +18,11 @@ keys). Documentation must never contain them.
    output because there is nowhere to put it.
 2. **Environment variables are documented by name only.**
 3. **Labels are dropped unless allowlisted.** Only OCI image metadata and a
-   handful of Traefik routing labels survive; header-matching rules and
-   middlewares are excluded.
+   handful of Traefik routing labels survive. A Traefik rule is kept only if
+   every matcher in it is a `Host`, `Path` or `Method` one; `Header`, `Query`,
+   `Cookie` and any matcher not known yet drop the whole rule. Middlewares are
+   excluded. Any value containing a URL with credentials
+   (`https://user:token@host`) is dropped, whatever its key.
 4. **Volumes appear by name, bind mounts by host path.** Host paths are
    disclosed. If your paths are sensitive, do not publish the output.
 5. **A canary test enforces it.** Every sensitive value in the test fixtures
@@ -27,9 +30,14 @@ keys). Documentation must never contain them.
    model, in any rendered page (both flavours), in the changelog or in the
    state folder.
 6. **Output is escaped.** Names and values are written in code spans whose
-   fence is longer than any backtick run inside, with control characters
-   flattened and table pipes escaped, so a hostile container name cannot inject
-   Markdown or HTML into your notes.
+   fence is longer than any backtick run inside, with control characters,
+   zero-width characters and bidirectional overrides replaced and table pipes
+   escaped, so a hostile container name cannot inject Markdown or HTML into
+   your notes or make text read differently from what it is.
+7. **The Docker client is narrow.** Plain HTTP and `GET` only, no redirects,
+   no proxy taken from the environment, container IDs checked to be
+   hexadecimal before they go into a request path, answers and event lines
+   size-capped, and no credentials accepted in the URL (it is logged).
 
 ## Where the protection ends
 
@@ -42,8 +50,9 @@ keys). Documentation must never contain them.
   containers through it.
 - **cadastre parses the full inspect document in memory** before dropping what
   it must not keep. The process holds secrets transiently.
-- **Image references and published ports are written as-is.** An image name
-  containing credentials would be copied.
+- **Image references, published ports and Traefik `Path` arguments are
+  written as-is.** An image name containing credentials, or a rule such as
+  ``PathPrefix(`/hooks/<secret>`)``, would be copied.
 - **No offsite or integrity protection** for the output folder. It is only as
   safe as the sync tool and the machines behind it.
 

@@ -33,12 +33,12 @@ drop guard for a deliberate teardown.
 <OUT_DIR>/
   index.md            overview and warnings
   changelog.md        what changed, newest first
-  stacks/<stack>.md   one page per Compose project
+  docker/<stack>.md   one page per Compose project
   .tmp/               scratch space for atomic writes
 ```
 
 Containers that were not started by Compose are grouped in a `_standalone`
-page. cadastre only deletes pages under `stacks/` that carry its generated
+page. cadastre only deletes pages under `docker/` that carry its generated
 marker; anything you wrote yourself is left alone. An existing `changelog.md`
 that does not carry the marker is never overwritten: the run fails instead.
 

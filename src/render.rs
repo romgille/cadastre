@@ -59,7 +59,7 @@ pub fn render(containers: &[Container], options: &Options) -> Vec<Page> {
 /// Link to a stack page from the index.
 fn stack_link(label: &str, slug: &str, options: Options) -> String {
     if options.obsidian {
-        format!("[[stacks/{slug}|{label}]]")
+        format!("[[docker/{slug}|{label}]]")
     } else {
         format!("[{}]({})", code(label), stack_path(slug))
     }
@@ -85,7 +85,7 @@ fn open_page(doc: &mut Doc, options: Options, front_matter: &[(&str, String)]) {
 }
 
 fn stack_path(slug: &str) -> String {
-    format!("stacks/{slug}.md")
+    format!("docker/{slug}.md")
 }
 
 fn render_index(
@@ -520,7 +520,7 @@ mod tests {
         let paths: Vec<_> = pages.iter().map(|p| p.path.as_str()).collect();
         assert_eq!(
             paths,
-            ["index.md", "stacks/_standalone.md", "stacks/shop.md"]
+            ["index.md", "docker/_standalone.md", "docker/shop.md"]
         );
     }
 
@@ -535,8 +535,8 @@ mod tests {
         let content = &page(&pages, "index.md").content;
         assert!(content.starts_with(&format!("{MARKER}\n")));
         assert!(content.contains("3 containers in 2 stacks."));
-        assert!(content.contains("| [`shop`](stacks/shop.md) | 2 |"));
-        assert!(content.contains("| [`standalone`](stacks/_standalone.md) | 1 |"));
+        assert!(content.contains("| [`shop`](docker/shop.md) | 2 |"));
+        assert!(content.contains("| [`standalone`](docker/_standalone.md) | 1 |"));
     }
 
     #[test]
@@ -582,7 +582,7 @@ mod tests {
             "https://example.com/web".into(),
         );
         let pages = render_default(&[web, container("shop-db-1", Some("shop"))]);
-        let content = &page(&pages, "stacks/shop.md").content;
+        let content = &page(&pages, "docker/shop.md").content;
 
         assert!(content.starts_with(&format!("{MARKER}\n")));
         assert!(content.contains("# Stack `shop`"));
@@ -628,7 +628,7 @@ mod tests {
             index.contains("- `web` publishes `80/tcp` on all interfaces (`0.0.0.0:8080`)."),
             "{index}"
         );
-        let stack = &page(&pages, "stacks/s.md").content;
+        let stack = &page(&pages, "docker/s.md").content;
         assert!(
             stack.contains("| `80/tcp` | `0.0.0.0:8080` (all interfaces) |"),
             "{stack}"
@@ -648,7 +648,7 @@ mod tests {
     fn plain_pages_have_no_front_matter_and_use_markdown_links() {
         let pages = render_default(&[container("web", Some("shop"))]);
         let index = &page(&pages, "index.md").content;
-        let stack = &page(&pages, "stacks/shop.md").content;
+        let stack = &page(&pages, "docker/shop.md").content;
         assert!(index.starts_with(MARKER) && stack.starts_with(MARKER));
         assert!(stack.contains("[Back to the index](../index.md)"));
     }
@@ -656,7 +656,7 @@ mod tests {
     #[test]
     fn obsidian_pages_get_front_matter_before_the_marker() {
         let pages = render_obsidian(&[container("web", Some("shop"))]);
-        let stack = &page(&pages, "stacks/shop.md").content;
+        let stack = &page(&pages, "docker/shop.md").content;
         assert!(
             stack.starts_with("---\ntags:\n  - infrastructure\n  - cadastre\n"),
             "{stack}"
@@ -678,12 +678,12 @@ mod tests {
         let pages = render_obsidian(&[container("web", Some("shop")), container("probe", None)]);
         let index = &page(&pages, "index.md").content;
         // The pipe of the alias is escaped because it sits in a table cell.
-        assert!(index.contains("| [[stacks/shop\\|shop]] | 1 |"), "{index}");
+        assert!(index.contains("| [[docker/shop\\|shop]] | 1 |"), "{index}");
         assert!(
-            index.contains("| [[stacks/_standalone\\|standalone]] | 1 |"),
+            index.contains("| [[docker/_standalone\\|standalone]] | 1 |"),
             "{index}"
         );
-        assert!(page(&pages, "stacks/shop.md")
+        assert!(page(&pages, "docker/shop.md")
             .content
             .contains("[[index|Back to the index]]"));
     }
@@ -714,7 +714,7 @@ mod tests {
     fn hostile_names_cannot_break_out_of_the_page_structure() {
         let evil = container("x`\n# injected | <script>alert(1)</script>", Some("shop"));
         let pages = render_default(&[evil]);
-        let content = &page(&pages, "stacks/shop.md").content;
+        let content = &page(&pages, "docker/shop.md").content;
         assert!(!content.contains("\n# injected"), "{content}");
         assert!(
             content.lines().all(|line| !line.starts_with("<script")),

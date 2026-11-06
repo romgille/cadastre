@@ -24,6 +24,9 @@ pub struct State {
     pub ghosts: Vec<String>,
     /// Answer every request with this status instead.
     pub status: Option<u16>,
+    /// Answer `/containers/json` with a redirect to `/elsewhere`, which serves
+    /// an empty list.
+    pub redirect_list: bool,
     /// Event lines sent, one chunk each, to the next `/events` client.
     pub events: Vec<String>,
     /// Number of `/events` connections opened so far.
@@ -82,6 +85,11 @@ impl MockDocker {
         self.state.lock().unwrap().events.push(line);
     }
 
+    /// Queues an event line as is, without building JSON around it.
+    pub fn push_raw_event(&self, line: &str) {
+        self.state.lock().unwrap().events.push(line.to_string());
+    }
+
     pub fn event_connections(&self) -> usize {
         self.state.lock().unwrap().event_connections
     }
@@ -118,6 +126,15 @@ fn serve(mut stream: TcpStream, state: &Mutex<State>) -> std::io::Result<()> {
         return respond(&mut stream, status, "{}");
     }
 
+    if route == "/elsewhere" {
+        return respond(&mut stream, 200, "[]");
+    }
+    if route == "/containers/json" && state.lock().unwrap().redirect_list {
+        return write!(
+            stream,
+            "HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+    }
     if route == "/containers/json" {
         let body = {
             let mut state = state.lock().unwrap();

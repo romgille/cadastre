@@ -19,8 +19,11 @@ use crate::render::{Page, MARKER};
 /// Add it to the sync tool's ignore list.
 pub const TMP_DIR: &str = ".tmp";
 
-/// Folder, relative to the output root, that holds one page per stack.
-pub const STACKS_DIR: &str = "stacks";
+/// Folder, relative to the output root, that holds one page per Docker stack.
+/// Every kind of source gets a folder of its own, and pruning never leaves
+/// the folder of the source that is being written, so one source cannot
+/// delete another one's pages.
+pub const DOCKER_DIR: &str = "docker";
 
 /// What a synchronization did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -94,11 +97,11 @@ impl OutDir {
         Ok(true)
     }
 
-    /// Removes pages under `stacks/` that carry the generated marker and are
+    /// Removes pages under `docker/` that carry the generated marker and are
     /// not in `keep`. Files without the marker are never touched: they were
     /// written by a person.
     fn prune_generated(&self, keep: &HashSet<&str>) -> Result<Vec<String>> {
-        let dir = self.root.join(STACKS_DIR);
+        let dir = self.root.join(DOCKER_DIR);
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -114,7 +117,7 @@ impl OutDir {
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            let relative = format!("{STACKS_DIR}/{name}");
+            let relative = format!("{DOCKER_DIR}/{name}");
             let is_page = name.ends_with(".md") && entry.file_type()?.is_file();
             if !is_page || keep.contains(relative.as_str()) {
                 continue;
@@ -188,11 +191,11 @@ mod tests {
     fn writes_pages_and_reports_them() {
         let (dir, out) = setup();
         let report = out
-            .sync(&[page("index.md", "a"), page("stacks/x.md", "b")])
+            .sync(&[page("index.md", "a"), page("docker/x.md", "b")])
             .unwrap();
-        assert_eq!(report.written, ["index.md", "stacks/x.md"]);
+        assert_eq!(report.written, ["index.md", "docker/x.md"]);
         assert_eq!(
-            fs::read_to_string(dir.path().join("stacks/x.md")).unwrap(),
+            fs::read_to_string(dir.path().join("docker/x.md")).unwrap(),
             "b"
         );
     }
@@ -233,32 +236,32 @@ mod tests {
     fn stale_generated_pages_are_removed() {
         let (dir, out) = setup();
         out.sync(&[
-            page("stacks/old.md", &generated("old")),
-            page("stacks/new.md", &generated("new")),
+            page("docker/old.md", &generated("old")),
+            page("docker/new.md", &generated("new")),
         ])
         .unwrap();
         let report = out
-            .sync(&[page("stacks/new.md", &generated("new"))])
+            .sync(&[page("docker/new.md", &generated("new"))])
             .unwrap();
-        assert_eq!(report.removed, ["stacks/old.md"]);
-        assert!(!dir.path().join("stacks/old.md").exists());
-        assert!(dir.path().join("stacks/new.md").exists());
+        assert_eq!(report.removed, ["docker/old.md"]);
+        assert!(!dir.path().join("docker/old.md").exists());
+        assert!(dir.path().join("docker/new.md").exists());
     }
 
     #[test]
     fn pages_written_by_a_person_are_never_removed() {
         let (dir, out) = setup();
-        fs::create_dir(dir.path().join("stacks")).unwrap();
-        fs::write(dir.path().join("stacks/mine.md"), "my own notes").unwrap();
-        fs::write(dir.path().join("stacks/data.txt"), "not a page").unwrap();
+        fs::create_dir(dir.path().join("docker")).unwrap();
+        fs::write(dir.path().join("docker/mine.md"), "my own notes").unwrap();
+        fs::write(dir.path().join("docker/data.txt"), "not a page").unwrap();
         let report = out.sync(&[page("index.md", "a")]).unwrap();
         assert!(report.removed.is_empty());
-        assert!(dir.path().join("stacks/mine.md").exists());
-        assert!(dir.path().join("stacks/data.txt").exists());
+        assert!(dir.path().join("docker/mine.md").exists());
+        assert!(dir.path().join("docker/data.txt").exists());
     }
 
     #[test]
-    fn files_outside_the_stacks_folder_are_never_removed() {
+    fn files_outside_the_docker_folder_are_never_removed() {
         let (dir, out) = setup();
         fs::write(dir.path().join("notes.md"), generated("looks generated")).unwrap();
         out.sync(&[page("index.md", "a")]).unwrap();
@@ -268,7 +271,7 @@ mod tests {
     #[test]
     fn paths_that_escape_the_folder_are_refused_before_anything_is_written() {
         let (dir, out) = setup();
-        for bad in ["../evil.md", "/etc/evil.md", "stacks/../../evil.md", ""] {
+        for bad in ["../evil.md", "/etc/evil.md", "docker/../../evil.md", ""] {
             let error = out
                 .sync(&[page("index.md", "a"), page(bad, "x")])
                 .unwrap_err();
