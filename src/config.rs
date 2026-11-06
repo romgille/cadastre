@@ -128,8 +128,15 @@ fn normalize_url(raw: &str) -> Result<String> {
              socket proxy on a private network"
         );
     }
-    if !url.starts_with("http://") {
-        bail!("{ENV_PREFIX}DOCKER_URL must start with http://, got {raw:?}");
+    let Some(rest) = url.strip_prefix("http://") else {
+        // The value is not echoed: it may hold credentials.
+        bail!("{ENV_PREFIX}DOCKER_URL must start with http://");
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        // The URL is written to the logs at startup, and nothing here needs
+        // authentication: access control belongs to the socket proxy.
+        bail!("{ENV_PREFIX}DOCKER_URL must not contain credentials");
     }
     Ok(url.trim_end_matches('/').to_string())
 }
@@ -300,5 +307,29 @@ mod tests {
             heartbeat_file_from(&env(&[])),
             PathBuf::from("/tmp/cadastre.heartbeat")
         );
+    }
+
+    #[test]
+    fn credentials_in_the_docker_url_are_refused_without_being_echoed() {
+        for url in ["http://user:s3cret@proxy:2375", "http://s3cret@proxy"] {
+            let pairs = [
+                ("DOCKER_URL", url),
+                ("OUT_DIR", "/out"),
+                ("STATE_DIR", "/state"),
+            ];
+            let error = Config::from_lookup(env(&pairs)).unwrap_err().to_string();
+            assert!(error.contains("credentials"), "{error}");
+            assert!(!error.contains("s3cret"), "{error}");
+        }
+    }
+
+    #[test]
+    fn an_at_sign_after_the_host_is_not_a_credential() {
+        let pairs = [
+            ("DOCKER_URL", "http://proxy:2375/path@x"),
+            ("OUT_DIR", "/out"),
+            ("STATE_DIR", "/state"),
+        ];
+        assert!(Config::from_lookup(env(&pairs)).is_ok());
     }
 }
