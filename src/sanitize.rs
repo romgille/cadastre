@@ -70,7 +70,22 @@ fn build(inspect: &Value, name: &str) -> Result<Container> {
 /// descriptive are allowed, and a few values are dropped even under an
 /// allowed key.
 pub fn label_allowed(key: &str, value: &str) -> bool {
+    // Image metadata such as `source` is a URL, and CI systems sometimes
+    // build it with a token in it. A credential is never documentation.
+    if has_url_credentials(value) {
+        return false;
+    }
     key.starts_with("org.opencontainers.image.") || traefik_routing_label(key, value)
+}
+
+/// Whether the text contains a URL with user information
+/// (`scheme://user:password@host`).
+fn has_url_credentials(value: &str) -> bool {
+    value.split("://").skip(1).any(|rest| {
+        rest.split(|c: char| matches!(c, '/' | '?' | '#') || c.is_whitespace())
+            .next()
+            .is_some_and(|authority| authority.contains('@'))
+    })
 }
 
 /// Traefik labels that describe where a service is reachable.
@@ -258,6 +273,25 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn urls_with_credentials_are_dropped_from_allowed_labels() {
+        let key = "org.opencontainers.image.source";
+        assert!(label_allowed(key, "https://github.com/example/web"));
+        assert!(label_allowed(key, "https://github.com/example/web@v1"));
+        assert!(!label_allowed(
+            key,
+            "https://ci:LEAK-token@github.com/example/web"
+        ));
+        assert!(!label_allowed(
+            key,
+            "https://LEAK-token@github.com/example/web"
+        ));
+        assert!(!label_allowed(
+            "org.opencontainers.image.description",
+            "mirror of https://u:LEAK-p@host/x, see docs"
+        ));
+    }
 
     fn sample() -> Value {
         json!({
