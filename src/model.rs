@@ -50,6 +50,22 @@ impl Container {
     pub fn stack(&self) -> &str {
         self.project.as_deref().unwrap_or(STANDALONE)
     }
+
+    /// Whether the container shares the host's network stack, which exposes
+    /// every port it listens on.
+    pub fn uses_host_network(&self) -> bool {
+        self.network_mode == "host"
+    }
+
+    /// The first twelve characters of the image ID, without the `sha256:`
+    /// prefix: enough to tell two images apart at a glance.
+    pub fn short_image_id(&self) -> &str {
+        let id = self
+            .image_id
+            .strip_prefix("sha256:")
+            .unwrap_or(&self.image_id);
+        id.get(..12).unwrap_or(id)
+    }
 }
 
 /// A port of a container, published on the host or merely exposed.
@@ -62,6 +78,18 @@ pub struct Port {
     pub host_ip: Option<String>,
     /// Host port. `None` when not published.
     pub host_port: Option<u16>,
+}
+
+impl Port {
+    pub fn is_published(&self) -> bool {
+        self.host_port.is_some()
+    }
+
+    /// Published on every interface of the host, rather than on a specific
+    /// address such as `127.0.0.1` or a private network address.
+    pub fn is_on_all_interfaces(&self) -> bool {
+        self.is_published() && matches!(self.host_ip.as_deref(), None | Some("0.0.0.0" | "::"))
+    }
 }
 
 /// A mount of a container.
@@ -106,6 +134,41 @@ mod tests {
     #[test]
     fn other_containers_fall_into_the_standalone_group() {
         assert_eq!(container(None).stack(), STANDALONE);
+    }
+
+    #[test]
+    fn the_short_image_id_drops_the_algorithm_and_is_twelve_characters_long() {
+        let mut c = container(None);
+        c.image_id = "sha256:0123456789abcdef0123".into();
+        assert_eq!(c.short_image_id(), "0123456789ab");
+        c.image_id = "abc".into();
+        assert_eq!(c.short_image_id(), "abc");
+    }
+
+    #[test]
+    fn only_published_wildcard_bindings_count_as_all_interfaces() {
+        let port = |ip: Option<&str>, host_port: Option<u16>| Port {
+            container_port: 80,
+            protocol: "tcp".into(),
+            host_ip: ip.map(String::from),
+            host_port,
+        };
+        assert!(port(Some("0.0.0.0"), Some(80)).is_on_all_interfaces());
+        assert!(port(Some("::"), Some(80)).is_on_all_interfaces());
+        assert!(!port(Some("127.0.0.1"), Some(80)).is_on_all_interfaces());
+        assert!(!port(Some("10.0.0.5"), Some(80)).is_on_all_interfaces());
+        assert!(
+            !port(None, None).is_on_all_interfaces(),
+            "unpublished ports are not exposed"
+        );
+    }
+
+    #[test]
+    fn host_networking_is_detected() {
+        let mut c = container(None);
+        assert!(!c.uses_host_network());
+        c.network_mode = "host".into();
+        assert!(c.uses_host_network());
     }
 
     #[test]
