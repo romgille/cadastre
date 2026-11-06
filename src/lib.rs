@@ -4,13 +4,17 @@
 //! The crate is split in small modules with one job each. The binary in
 //! `main.rs` only wires them together.
 
+pub mod changelog;
 pub mod config;
+pub mod diff;
 pub mod fsutil;
 pub mod log;
 pub mod model;
 pub mod output;
 pub mod render;
 pub mod sanitize;
+pub mod snapshot;
+pub mod timefmt;
 
 /// Version of the running build, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
