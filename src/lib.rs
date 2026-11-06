@@ -7,6 +7,7 @@
 pub mod changelog;
 pub mod config;
 pub mod diff;
+pub mod docker;
 pub mod fsutil;
 pub mod log;
 pub mod model;
