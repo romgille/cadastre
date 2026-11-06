@@ -6,9 +6,11 @@
 
 pub mod changelog;
 pub mod config;
+pub mod daemon;
 pub mod diff;
 pub mod docker;
 pub mod fsutil;
+pub mod heartbeat;
 pub mod log;
 pub mod metrics;
 pub mod model;
@@ -16,6 +18,7 @@ pub mod output;
 pub mod pipeline;
 pub mod render;
 pub mod sanitize;
+pub mod schedule;
 pub mod snapshot;
 pub mod timefmt;
 
