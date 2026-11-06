@@ -1,16 +1,65 @@
 name: Release
 
-# Publishing is triggered by pushing a tag such as v0.1.0.
+# A release happens when a change merged into main brings a Cargo.toml version
+# that has no tag yet. The tag is created last, by `gh release create`, once
+# the image is published: a failed build leaves no tag and no release.
+# (A tag pushed with GITHUB_TOKEN would not trigger any workflow, so the
+# release is not driven by a tag event.)
 on:
   push:
-    tags: ["v*.*.*"]
+    branches: [main]
+    paths: [Cargo.toml]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# Two releases must never publish at the same time.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  plan:
+    name: Decide whether a release is due
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      due: ${{ steps.version.outputs.due }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "cannot read a X.Y.Z version from Cargo.toml (got '$version')" >&2
+            exit 1
+          fi
+          # Only "Not Found" means the tag is free; any other failure stops
+          # the run instead of being read as "no tag".
+          if out="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version" 2>&1)"; then
+            due=false
+            echo "::notice::v$version already exists, nothing to release"
+          elif printf '%s' "$out" | grep -q 'Not Found'; then
+            due=true
+          else
+            echo "cannot check for tag v$version: $out" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "due=$due" >> "$GITHUB_OUTPUT"
+
   image:
     name: Publish the container image
+    needs: plan
+    if: needs.plan.outputs.due == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -21,18 +70,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # A tag that disagrees with Cargo.toml would publish a binary that
-      # reports the wrong version. Fail instead.
-      - name: The tag matches the crate version
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          crate="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          if [ "$TAG" != "$crate" ]; then
-            echo "tag $TAG does not match Cargo.toml version $crate" >&2
-            exit 1
-          fi
-
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -42,13 +79,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - id: minor
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: echo "value=${VERSION%.*}" >> "$GITHUB_OUTPUT"
+
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.plan.outputs.version }}
+            type=raw,value=${{ steps.minor.outputs.value }}
             type=raw,value=latest
 
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -59,18 +101,19 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=v${{ needs.plan.outputs.version }}
 
   release:
-    name: Create the GitHub release
-    needs: image
+    name: Tag and create the GitHub release
+    needs: [plan, image]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      # Creates the tag on the commit that was built.
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes
