@@ -255,6 +255,14 @@ fn an_endpoint_that_was_down_at_startup_is_picked_up_once_it_recovers() {
     wait_for("the partial publication", || {
         fs::read_to_string(&index).is_ok_and(|text| text.contains("unreachable"))
     });
+    wait_for("the failing endpoint to be listened to", || {
+        vps.state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .any(|path| path.starts_with("/events"))
+    });
     vps.set_status(None);
     wait_for("the recovered endpoint", || {
         fs::read_to_string(&index).is_ok_and(|text| text.contains("uptime-probe"))

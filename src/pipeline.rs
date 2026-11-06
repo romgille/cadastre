@@ -59,8 +59,8 @@ pub fn run_once(
     let mut containers = Vec::new();
     let mut hosts = Vec::new();
     let mut failed = Vec::new();
-    for docker in dockers {
-        let result = docker.containers().and_then(|found| {
+    for (docker, read) in read_all(dockers) {
+        let result = read.and_then(|found| {
             if let (true, false, Some(previous), Some(name)) =
                 (multi, accept_shrink, &previous, docker.host())
             {
@@ -144,6 +144,35 @@ pub fn run_once(
     }
     hosts.sort_by(|a, b| a.name.cmp(&b.name));
     publish_with_hosts(config, &containers, &hosts, now, accept_shrink)
+}
+
+/// Most endpoints read at the same time.
+const MAX_PARALLEL_READS: usize = 8;
+
+/// Reads every endpoint, a bounded number at a time, so that slow endpoints
+/// delay a run by one timeout instead of one timeout each. Results keep the
+/// order of `dockers`.
+fn read_all(dockers: &[Docker]) -> Vec<(&Docker, Result<Vec<Container>>)> {
+    let mut results = Vec::with_capacity(dockers.len());
+    for batch in dockers.chunks(MAX_PARALLEL_READS) {
+        if let [only] = batch {
+            results.push((only, only.containers()));
+            continue;
+        }
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = batch
+                .iter()
+                .map(|docker| (docker, scope.spawn(|| docker.containers())))
+                .collect();
+            for (docker, handle) in handles {
+                let read = handle
+                    .join()
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("the endpoint reader panicked")));
+                results.push((docker, read));
+            }
+        });
+    }
+    results
 }
 
 /// Publishes `containers`: pages, then changelog, then snapshot.
