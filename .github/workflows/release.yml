@@ -14,9 +14,11 @@ on:
 permissions:
   contents: read
 
-# Two releases must never publish at the same time.
+# A concurrency group keeps a single pending run, so a shared group would
+# silently drop intermediate version bumps. One group per commit never
+# cancels a release; each version is built, tagged and released.
 concurrency:
-  group: release
+  group: release-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
