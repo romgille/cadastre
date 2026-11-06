@@ -100,13 +100,53 @@ fn traefik_routing_label(key: &str, value: &str) -> bool {
     }
     if let Some(rest) = key.strip_prefix("traefik.http.routers.") {
         if rest.ends_with(".rule") {
-            return !value.to_ascii_lowercase().contains("header");
+            return rule_uses_only_safe_matchers(value);
         }
         return [".entrypoints", ".service", ".tls.certresolver"]
             .iter()
             .any(|suffix| rest.ends_with(suffix));
     }
     key.starts_with("traefik.http.services.") && key.ends_with(".loadbalancer.server.port")
+}
+
+/// Matchers whose arguments describe where a service lives. The others
+/// (`Header`, `HeadersRegexp`, `Query`, `QueryRegexp`, `Cookie`...) match on
+/// request content, which is where shared secrets end up.
+const SAFE_MATCHERS: [&str; 6] = [
+    "host",
+    "hostregexp",
+    "path",
+    "pathprefix",
+    "pathregexp",
+    "method",
+];
+
+/// Whether every matcher used in a Traefik rule is a safe one. A rule with
+/// an unknown matcher is dropped as a whole: allowlist, not blocklist.
+fn rule_uses_only_safe_matchers(rule: &str) -> bool {
+    let mut name = String::new();
+    let mut quote: Option<char> = None;
+    for c in rule.chars() {
+        if let Some(open) = quote {
+            // Arguments are quoted; what is inside is not a matcher name.
+            if c == open {
+                quote = None;
+            }
+        } else if c == '`' || c == '"' {
+            quote = Some(c);
+            name.clear();
+        } else if c == '(' {
+            if !SAFE_MATCHERS.contains(&name.to_ascii_lowercase().as_str()) {
+                return false;
+            }
+            name.clear();
+        } else if c.is_ascii_alphabetic() {
+            name.push(c);
+        } else {
+            name.clear();
+        }
+    }
+    quote.is_none()
 }
 
 fn allowed_labels(labels: Option<&Map<String, Value>>) -> BTreeMap<String, String> {
@@ -273,6 +313,36 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn rules_are_kept_only_when_every_matcher_is_known_to_be_safe() {
+        let key = "traefik.http.routers.app.rule";
+        for rule in [
+            "Host(`app.example.com`)",
+            "Host(`a.example.com`) && PathPrefix(`/api`)",
+            "host(`a.example.com`) || HostRegexp(`^b\\.example\\.com$`)",
+            "Method(`GET`) && !Path(`/admin`)",
+        ] {
+            assert!(label_allowed(key, rule), "{rule}");
+        }
+        for rule in [
+            "Host(`a.example.com`) && Header(`X-Token`, `LEAK-secret`)",
+            "Host(`a.example.com`) && HeadersRegexp(`X-Token`, `LEAK-.*`)",
+            "Host(`a.example.com`) && Query(`token=LEAK-secret`)",
+            "Host(`a.example.com`) && QueryRegexp(`token`, `LEAK`)",
+            "Host(`a.example.com`) && Cookie(`session`, `LEAK`)",
+            "Host(`a.example.com`) && FutureMatcher(`x`)",
+            "Host(`a.example.com",
+        ] {
+            assert!(!label_allowed(key, rule), "{rule}");
+        }
+    }
+
+    #[test]
+    fn a_parenthesis_inside_a_quoted_argument_is_not_a_matcher() {
+        let key = "traefik.http.routers.app.rule";
+        assert!(label_allowed(key, "Host(`a.example.com`) && Path(`/a(b)`)"));
+    }
 
     #[test]
     fn urls_with_credentials_are_dropped_from_allowed_labels() {
